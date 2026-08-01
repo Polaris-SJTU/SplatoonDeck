@@ -316,7 +316,7 @@ class SystemManager {
     const checks = [
       { id: 'windows', label: 'Windows', ok: status.windows.ok, detail: status.windows.version },
       { id: 'wsl', label: 'WSL 2', ok: status.wsl.installed, detail: status.wsl.detail || '未安装' },
-      { id: 'distro', label: 'SquidDeck 环境', ok: status.distro.installed, detail: status.distro.installed ? '已安装' : '尚未安装' },
+      { id: 'distro', label: 'SplatoonDeck 环境', ok: status.distro.installed, detail: status.distro.installed ? '已安装' : '尚未安装' },
       { id: 'usbipd', label: 'usbipd-win', ok: status.usbipd.installed, detail: status.usbipd.version || status.usbipd.detail || '未安装' },
       { id: 'adapter', label: 'USB 蓝牙适配器', ok: status.bluetooth.candidates.length > 0, detail: status.bluetooth.candidates.map((x) => `${x.description} (${x.busId}, ${x.state})`).join('\n') || '未识别到候选设备' }
     ];

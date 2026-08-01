@@ -20,7 +20,7 @@ export default function SetupPage({ status, refresh, notify }: Props) {
   const allReady = Boolean(status?.wsl.installed && status?.distro.installed && status?.usbipd.installed);
   const steps = useMemo(() => [
     { title: 'WSL 2', detail: '隔离运行 Linux 蓝牙协议栈', ok: Boolean(status?.wsl.installed) },
-    { title: '专用环境', detail: '只存放 SquidDeck 的 BlueZ 与 NXBT', ok: Boolean(status?.distro.installed) },
+    { title: '专用环境', detail: '只存放 SplatoonDeck 的 BlueZ 与 NXBT', ok: Boolean(status?.distro.installed) },
     { title: 'USB/IP', detail: '把内置蓝牙临时交给 WSL', ok: Boolean(status?.usbipd.installed) }
   ], [status]);
 

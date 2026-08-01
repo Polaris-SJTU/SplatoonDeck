@@ -21,7 +21,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 680,
     backgroundColor: '#101014',
-    title: 'SquidDeck',
+    title: 'SplatoonDeck',
     icon: app.isPackaged
       ? path.join(process.resourcesPath, 'icon.png')
       : path.join(__dirname, '..', 'build', 'icon.png'),

@@ -1,31 +1,31 @@
 <p align="center">
-  <img src="./build/icon.png" width="180" alt="SquidDeck 图标" />
+  <img src="./build/icon.png" width="180" alt="SplatoonDeck 图标" />
 </p>
 
-<h1 align="center">SquidDeck</h1>
+<h1 align="center">SplatoonDeck</h1>
 
 <p align="center">
   <strong>用键盘鼠标控制 Switch 2，把喜欢的图片自动画进 Splatoon 3。</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Polaris-SJTU/SquidDeck/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Polaris-SJTU/SquidDeck?display_name=tag&style=flat-square" /></a>
-  <a href="https://github.com/Polaris-SJTU/SquidDeck/releases"><img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/Polaris-SJTU/SquidDeck/total?style=flat-square" /></a>
-  <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/Polaris-SJTU/SquidDeck?style=flat-square" /></a>
+  <a href="https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Polaris-SJTU/SplatoonDeck?display_name=tag&style=flat-square" /></a>
+  <a href="https://github.com/Polaris-SJTU/SplatoonDeck/releases"><img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/Polaris-SJTU/SplatoonDeck/total?style=flat-square" /></a>
+  <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/Polaris-SJTU/SplatoonDeck?style=flat-square" /></a>
   <img alt="Windows 11" src="https://img.shields.io/badge/Windows-11_x64-34e7e1?style=flat-square" />
   <img alt="Switch 2" src="https://img.shields.io/badge/compatibility-Switch_2-c9ff38?style=flat-square&labelColor=17171c" />
 </p>
 
-SquidDeck 是一款为 Windows 11、Switch 2 和 Splatoon 3 打造的便携工具。无需购买 ESP32、树莓派或其他外设，只需使用电脑自带或现有的 USB 蓝牙，就能获得虚拟 Pro Controller、键鼠操控和图片自动绘制功能。
+SplatoonDeck 是一款为 Windows 11、Switch 2 和 Splatoon 3 打造的便携工具。无需购买 ESP32、树莓派或其他外设，只需使用电脑自带或现有的 USB 蓝牙，就能获得虚拟 Pro Controller、键鼠操控和图片自动绘制功能。
 
 ## 下载
 
-前往 [GitHub Releases](https://github.com/Polaris-SJTU/SquidDeck/releases/latest) 下载最新版：
+前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 下载最新版：
 
-- [`SquidDeck-0.1.0-portable.exe`](https://github.com/Polaris-SJTU/SquidDeck/releases/download/v0.1.0/SquidDeck-0.1.0-portable.exe)
-- [`SHA-256 校验文件`](https://github.com/Polaris-SJTU/SquidDeck/releases/download/v0.1.0/SquidDeck-0.1.0-portable.exe.sha256)
+- [`SplatoonDeck-0.1.0-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.1.0/SplatoonDeck-0.1.0-portable.exe)
+- [`SHA-256 校验文件`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.1.0/SplatoonDeck-0.1.0-portable.exe.sha256)
 
-SquidDeck 是单文件便携应用，不需要传统安装。首次运行时，可以直接在应用里准备和管理所需环境。
+SplatoonDeck 是单文件便携应用，不需要传统安装。首次运行时，可以直接在应用里准备和管理所需环境。
 
 ## 主要功能
 
@@ -52,26 +52,26 @@ SquidDeck 是单文件便携应用，不需要传统安装。首次运行时，�
 
 - 自动检测电脑中的 USB 蓝牙。
 - 在应用内安装、检查、修复和清理所需组件。
-- 蓝牙可以临时交给 SquidDeck 使用，也可以随时归还 Windows。
+- 蓝牙可以临时交给 SplatoonDeck 使用，也可以随时归还 Windows。
 - 内置兼容性诊断，遇到问题时可以快速找到未准备好的项目。
 - 独立保存运行环境，不会修改已有的 Linux 发行版。
 
 ## 快速开始
 
-1. 下载并运行 `SquidDeck-0.1.0-portable.exe`。
+1. 下载并运行 `SplatoonDeck-0.1.0-portable.exe`。
 2. 打开“准备舱”，点击“一键安装依赖”。如果系统提示重启，重启后再打开应用继续。
 3. 运行兼容性诊断，选择检测到的 USB 蓝牙并点击“临时接管蓝牙”。
 4. 在 Switch 2 打开“手柄 → 更改握法/顺序”。
-5. 进入 SquidDeck 的“虚拟手柄”，点击“连接 Switch 2”。
+5. 进入 SplatoonDeck 的“虚拟手柄”，点击“连接 Switch 2”。
 6. 先试一下按键和摇杆，确认可以正常控制游戏。
 7. 进入 Splatoon 3 横向涂鸦画布，在“涂鸦工坊”载入内置校准图。
 8. 校准图绘制正确后，导入自己的图片并开始自动绘制。
 
-绘制完成后由玩家在游戏里检查并发布。断开虚拟手柄时蓝牙会继续由 SquidDeck 保持，方便再次连接；需要恢复 Windows 蓝牙时，请回到“准备舱”点击归还。
+绘制完成后由玩家在游戏里检查并发布。断开虚拟手柄时蓝牙会继续由 SplatoonDeck 保持，方便再次连接；需要恢复 Windows 蓝牙时，请回到“准备舱”点击归还。
 
 ## 图片效果
 
-SquidDeck 会把导入图片转换成 38,400 个黑白像素。你可以在绘制前实时调整效果：
+SplatoonDeck 会把导入图片转换成 38,400 个黑白像素。你可以在绘制前实时调整效果：
 
 - **Floyd–Steinberg**：层次细腻，适合照片和渐变。
 - **Atkinson**：画面清爽，适合头像和插画。
@@ -116,8 +116,8 @@ SquidDeck 会把导入图片转换成 38,400 个黑白像素。你可以在绘�
 需要 Git、当前维护的 Node.js LTS 和 npm。
 
 ```powershell
-git clone https://github.com/Polaris-SJTU/SquidDeck.git
-cd SquidDeck
+git clone https://github.com/Polaris-SJTU/SplatoonDeck.git
+cd SplatoonDeck
 npm.cmd install
 npm.cmd run dev
 ```
@@ -131,7 +131,7 @@ npm.cmd run dist   # 打包便携 EXE
 主要目录：
 
 ```text
-SquidDeck/
+SplatoonDeck/
 ├─ src/        应用界面、键鼠映射与图片处理
 ├─ electron/   Windows、蓝牙和应用生命周期
 ├─ backend/    虚拟手柄桥接程序
@@ -142,7 +142,7 @@ SquidDeck/
 
 ## 参与项目
 
-欢迎通过 [Issues](https://github.com/Polaris-SJTU/SquidDeck/issues) 提交建议、兼容性反馈和问题，也欢迎提交 Pull Request。
+欢迎通过 [Issues](https://github.com/Polaris-SJTU/SplatoonDeck/issues) 提交建议、兼容性反馈和问题，也欢迎提交 Pull Request。
 
 提交代码前请运行：
 
@@ -162,4 +162,4 @@ npm.cmd run build
 
 代码使用 [MIT License](./LICENSE)。
 
-SquidDeck 使用原创界面与品牌元素，不包含任天堂或 Splatoon 官方素材。本项目与 Nintendo、Nintendo Switch、Switch 2、Splatoon 或其权利人无隶属、赞助或背书关系；相关名称与商标归各自权利人所有。
+SplatoonDeck 使用原创界面与品牌元素，不包含任天堂或 Splatoon 官方素材。本项目与 Nintendo、Nintendo Switch、Switch 2、Splatoon 或其权利人无隶属、赞助或背书关系；相关名称与商标归各自权利人所有。

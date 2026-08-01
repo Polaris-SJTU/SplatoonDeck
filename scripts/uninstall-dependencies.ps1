@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $StatePath)) {
-  Write-Host 'No SquidDeck install record was found. Nothing was removed.'
+  Write-Host 'No SplatoonDeck install record was found. Nothing was removed.'
   exit 0
 }
 
@@ -13,7 +13,7 @@ $state = Get-Content -Raw $StatePath | ConvertFrom-Json
 $Distro = 'SquidSketch'
 $AppRoot = Join-Path $env:LOCALAPPDATA 'SquidSketch'
 
-Write-Host '[1/4] Returning and unsharing Bluetooth devices owned by SquidDeck'
+Write-Host '[1/4] Returning and unsharing Bluetooth devices owned by SplatoonDeck'
 if (Get-Command usbipd.exe -ErrorAction SilentlyContinue) {
   try {
     $usbState = usbipd.exe state | ConvertFrom-Json

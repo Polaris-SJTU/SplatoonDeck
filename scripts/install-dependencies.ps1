@@ -99,4 +99,4 @@ $state.restartRequired = $false
 $state.completed = $true
 $state.completedAt = (Get-Date).ToString('o')
 Save-State
-Write-Host 'SquidDeck dependency setup completed.'
+Write-Host 'SplatoonDeck dependency setup completed.'

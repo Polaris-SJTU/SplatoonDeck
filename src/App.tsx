@@ -99,7 +99,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand" onClick={() => setPage('setup')}>
           <div className="brand-mark"><span>SD</span></div>
-          <div><strong>SQUID</strong><em>DECK</em></div>
+          <div><strong>SPLATOON</strong><em>DECK</em></div>
         </div>
         <nav>
           {navItems.map((item) => (

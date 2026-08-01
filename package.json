@@ -1,10 +1,10 @@
 {
-  "name": "squid-sketch",
+  "name": "splatoon-deck",
   "version": "0.1.0",
   "private": true,
   "description": "Zero-hardware Switch 2 controller and Splatoon drawing companion for Windows",
   "main": "electron/main.cjs",
-  "author": "SquidDeck contributors",
+  "author": "SplatoonDeck contributors",
   "license": "MIT",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
@@ -30,8 +30,8 @@
     "jsdom": "latest"
   },
   "build": {
-    "appId": "ink.squidsketch.desktop",
-    "productName": "SquidDeck",
+    "appId": "ink.splatoondeck.desktop",
+    "productName": "SplatoonDeck",
     "electronDist": ".cache/electron-dist",
     "directories": { "output": "release" },
     "asar": true,
@@ -50,10 +50,10 @@
     "win": {
       "icon": "build/icon.ico",
       "target": [{ "target": "portable", "arch": ["x64"] }],
-      "artifactName": "SquidDeck-${version}-portable.exe"
+      "artifactName": "SplatoonDeck-${version}-portable.exe"
     },
     "portable": {
-      "artifactName": "SquidDeck-${version}-portable.exe",
+      "artifactName": "SplatoonDeck-${version}-portable.exe",
       "requestExecutionLevel": "user"
     }
   }
