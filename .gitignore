@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-ui/
+release/
+*.log
+.vite/
+coverage/
+.cache/
+.test-userdata/
+build/packaged-icon-preview.png

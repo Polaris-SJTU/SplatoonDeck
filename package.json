@@ -1,0 +1,60 @@
+{
+  "name": "squid-sketch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zero-hardware Switch 2 controller and Splatoon drawing companion for Windows",
+  "main": "electron/main.cjs",
+  "author": "SquidDeck contributors",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "tsc --noEmit && vite build",
+    "dist": "npm run build && electron-builder --win portable",
+    "test": "vitest run && node --test electron/system-manager.test.cjs"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "concurrently": "latest",
+    "wait-on": "latest",
+    "vitest": "latest",
+    "jsdom": "latest"
+  },
+  "build": {
+    "appId": "ink.squidsketch.desktop",
+    "productName": "SquidDeck",
+    "electronDist": ".cache/electron-dist",
+    "directories": { "output": "release" },
+    "asar": true,
+    "files": [
+      "dist-ui/**/*",
+      "electron/**/*",
+      "backend/**/*",
+      "scripts/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "backend", "to": "backend" },
+      { "from": "scripts", "to": "scripts" },
+      { "from": "build/icon.png", "to": "icon.png" }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [{ "target": "portable", "arch": ["x64"] }],
+      "artifactName": "SquidDeck-${version}-portable.exe"
+    },
+    "portable": {
+      "artifactName": "SquidDeck-${version}-portable.exe",
+      "requestExecutionLevel": "user"
+    }
+  }
+}
