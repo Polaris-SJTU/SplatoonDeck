@@ -76,7 +76,9 @@ class ControllerService {
     this.send({ type: 'shutdown' });
     const child = this.process;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { child.kill(); resolve({ ok: true, forced: true }); }, 4_000);
+      // Allow up to 8s for BlueZ to complete the Bluetooth disconnect
+      // handshake before force-killing the Python process.
+      const timer = setTimeout(() => { child.kill(); resolve({ ok: true, forced: true }); }, 8_000);
       child.once('exit', () => { clearTimeout(timer); resolve({ ok: true }); });
     });
   }

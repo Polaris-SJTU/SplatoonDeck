@@ -185,7 +185,7 @@ def main() -> int:
                 else:
                     elapsed = int((time.monotonic() - macro_started) * 1000)
                     emit("macro_progress", progress=min(0.995, elapsed / macro_duration), elapsedMs=elapsed)
-                    time.sleep(0.2)
+                    time.sleep(0.05)
                     continue
 
             has_input = bool(buttons) or any(x or y for x, y in sticks.values())
@@ -204,8 +204,16 @@ def main() -> int:
         return 1
     finally:
         if nx is not None and controller_index is not None:
+            # Release all inputs so the Switch sees a clean neutral state.
+            try:
+                nx.set_controller_input(controller_index, active_packet(nx, set(), {"L_STICK": (0, 0), "R_STICK": (0, 0)}))
+                time.sleep(0.3)
+            except Exception:
+                pass
             try:
                 nx.remove_controller(controller_index)
+                # Give BlueZ time to send the Bluetooth disconnect HCI command.
+                time.sleep(3)
             except Exception:
                 pass
 

@@ -42,8 +42,8 @@ SplatoonDeck 是一款为 Windows 11、Switch 2 和 Splatoon 3 打造的便携�
 
 前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 下载最新版：
 
-- [`SplatoonDeck-0.1.0-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.1.0/SplatoonDeck-0.1.0-portable.exe)
-- [`SHA-256 校验文件`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.1.0/SplatoonDeck-0.1.0-portable.exe.sha256)
+- [`SplatoonDeck-0.2.0-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.0/SplatoonDeck-0.2.0-portable.exe)
+- [`SHA-256 校验文件`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.0/SplatoonDeck-0.2.0-portable.exe.sha256)
 
 SplatoonDeck 是单文件便携应用，不需要传统安装。首次运行时，可以直接在应用里准备和管理所需环境。
 
@@ -66,7 +66,11 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。首次运行时�
 - 提供四种像素转换风格，适合照片、头像、文字和线稿。
 - 实时预览最终画面，预览内容与绘制路径使用同一份像素数据。
 - 自动清空画布、选择最小画笔并移动到正确起点。
+- 更换图片后自动刷新绘制范围，支持逐行和逐列两种扫描方向。
 - 支持剩余时间显示、停止绘制、指定行数和中断续画。
+- 全部使用方向键定位，精确 1 像素步进，绘制稳定不漂移。
+- 预览图实时显示光标位置，已绘制像素逐点变红。
+- 绘制进度与预览同步，支持剩余时间显示、停止绘制、指定行数和中断续画。
 
 ### 对新手友好的环境管理
 
@@ -78,7 +82,7 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。首次运行时�
 
 ## 快速开始
 
-1. 下载并运行 `SplatoonDeck-0.1.0-portable.exe`。
+1. 下载并运行 `SplatoonDeck-0.2.0-portable.exe`。
 2. 打开“准备舱”，点击“一键安装依赖”。如果系统提示重启，重启后再打开应用继续。
 3. 运行兼容性诊断，选择检测到的 USB 蓝牙并点击“临时接管蓝牙”。
 4. 在 Switch 2 打开“手柄 → 更改握法/顺序”。

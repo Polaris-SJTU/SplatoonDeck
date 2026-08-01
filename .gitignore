@@ -8,3 +8,6 @@ coverage/
 .cache/
 .test-userdata/
 build/packaged-icon-preview.png
+
+# Code signing certificate
+build/code-signing.pfx
