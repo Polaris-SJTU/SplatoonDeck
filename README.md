@@ -18,6 +18,26 @@
 
 SplatoonDeck 是一款为 Windows 11、Switch 2 和 Splatoon 3 打造的便携工具。无需购买 ESP32、树莓派或其他外设，只需使用电脑自带或现有的 USB 蓝牙，就能获得虚拟 Pro Controller、键鼠操控和图片自动绘制功能。
 
+## 界面预览
+
+### 准备舱
+
+一站式检查运行环境、接管蓝牙，并在需要时将蓝牙归还 Windows。
+
+![SplatoonDeck 准备舱](./docs/screenshots/setup.png)
+
+### 虚拟手柄
+
+通过拟真的 Pro Controller 界面操作 Switch 2，也可以使用自定义键盘与鼠标映射。
+
+![SplatoonDeck 虚拟手柄](./docs/screenshots/controller.png)
+
+### 涂鸦工坊
+
+导入图片、调整黑白像素效果，预览 `320 × 120` 游戏画布并启动自动绘制。
+
+![SplatoonDeck 涂鸦工坊](./docs/screenshots/studio.png)
+
 ## 下载
 
 前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 下载最新版：
