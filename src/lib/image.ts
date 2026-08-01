@@ -3,6 +3,7 @@ export const CANVAS_HEIGHT = 120;
 
 export type DitherMode = 'threshold' | 'floyd-steinberg' | 'atkinson' | 'bayer';
 export type FitMode = 'contain' | 'cover' | 'stretch';
+export type ScanDirection = 'auto' | 'row' | 'column';
 
 export type ImageSettings = {
   brightness: number;
@@ -15,10 +16,10 @@ export type ImageSettings = {
 
 export type MacroOptions = {
   pressDurationMs: number;
-  cautious: boolean;
   autoSave: boolean;
   startRow?: number;
   endRow?: number;
+  scanDirection?: ScanDirection;
 };
 
 export type MacroResult = {
@@ -30,8 +31,33 @@ export type MacroResult = {
   plannedBlackPixels: number;
   pixelChecksum: string;
   verified: true;
+  scanDirection: 'row' | 'column';
+  skippedBands: number;
+  totalBands: number;
+  contentFirstBand: number;
+  contentLastBand: number;
+  pixelTimestamps: number[];
 };
 
+export const NXBT_HZ = 132;
+
+/**
+ * Convert a theoretical millisecond duration to the actual wall-clock time
+ * NXBT will take per macro line.  NXBT's mainloop runs at 132 Hz and checks
+ * `time_delta > timer_length` (strict >) once per tick, then loads the next
+ * line on the following tick.  So the actual duration per line is:
+ *   (floor(duration_s * 132) + 2) / 132  seconds
+ * The +2 = +1 for strict >, +1 because the next line starts on the next tick.
+ */
+export function nxbtMs(ms: number): number {
+  const ticks = Math.floor((ms / 1000) * NXBT_HZ) + 2;
+  return (ticks / NXBT_HZ) * 1000;
+}
+const STICK_LEFT = 'L_STICK@-100+000';
+const STICK_RIGHT = 'L_STICK@+100+000';
+const STICK_UP = 'L_STICK@+000+100';
+const STICK_DOWN = 'L_STICK@+000-100';
+const STICK_CENTER = 'L_STICK@+000+000';
 export function transformLuminance(value: number, brightness: number, contrast: number) {
   const brightened = value + brightness * 2.55;
   const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
@@ -154,65 +180,275 @@ export function processImage(image: HTMLImageElement, settings: ImageSettings) {
   return { pixels };
 }
 
+export function estimateScanCost(pixels: Uint8Array, width: number, height: number, direction: 'row' | 'column') {
+  let nonEmptyBands = 0;
+  if (direction === 'row') {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) { if (pixels[y * width + x]) { nonEmptyBands++; break; } }
+    }
+    return nonEmptyBands * (width - 1);
+  }
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) { if (pixels[y * width + x]) { nonEmptyBands++; break; } }
+  }
+  return nonEmptyBands * (height - 1);
+}
+
+export function resolveScanDirection(pixels: Uint8Array, width: number, height: number): 'row' | 'column' {
+  return estimateScanCost(pixels, width, height, 'row') <= estimateScanCost(pixels, width, height, 'column') ? 'row' : 'column';
+}
+
+export type DrawPathPoint = { x: number; y: number };
+
+/** Returns the ordered list of pixel coordinates that will be painted. */
+export function getDrawPath(pixels: Uint8Array, width: number, height: number, options: MacroOptions): DrawPathPoint[] {
+  const preference = options.scanDirection ?? 'auto';
+  const scanDirection: 'row' | 'column' = preference === 'column' ? 'column' : preference === 'row' ? 'row' : resolveScanDirection(pixels, width, height);
+  const startBand = Math.max(0, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.startRow ?? 0)));
+  const endBand = Math.max(startBand, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.endRow ?? (scanDirection === 'row' ? height : width) - 1)));
+  const path: DrawPathPoint[] = [];
+  if (scanDirection === 'row') {
+    const firstBlack = new Int32Array(height).fill(-1);
+    const lastBlack = new Int32Array(height).fill(-1);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (pixels[y * width + x]) { if (firstBlack[y] < 0) firstBlack[y] = x; lastBlack[y] = x; }
+    let direction = 1;
+    for (let y = startBand; y <= endBand; y++) {
+      if (firstBlack[y] < 0) continue;
+      const startX = direction > 0 ? firstBlack[y] : lastBlack[y];
+      const endX = direction > 0 ? lastBlack[y] : firstBlack[y];
+      for (let x = startX; direction > 0 ? x <= endX : x >= endX; x += direction) {
+        if (pixels[y * width + x]) path.push({ x, y });
+      }
+      direction *= -1;
+    }
+  } else {
+    const firstBlack = new Int32Array(width).fill(-1);
+    const lastBlack = new Int32Array(width).fill(-1);
+    for (let x = 0; x < width; x++) for (let y = 0; y < height; y++) if (pixels[y * width + x]) { if (firstBlack[x] < 0) firstBlack[x] = y; lastBlack[x] = y; }
+    let direction = 1;
+    for (let x = startBand; x <= endBand; x++) {
+      if (firstBlack[x] < 0) continue;
+      const startY = direction > 0 ? firstBlack[x] : lastBlack[x];
+      const endY = direction > 0 ? lastBlack[x] : firstBlack[x];
+      for (let y = startY; direction > 0 ? y <= endY : y >= endY; y += direction) {
+        if (pixels[y * width + x]) path.push({ x, y });
+      }
+      direction *= -1;
+    }
+  }
+  return path;
+}
+
 export function generateMacro(pixels: Uint8Array, width: number, height: number, options: MacroOptions): MacroResult {
-  if (pixels.length !== width * height) throw new Error('像素数据尺寸不匹配');
-  const duration = Math.max(35, Math.min(200, Math.round(options.pressDurationMs)));
-  const startRow = Math.max(0, Math.min(height - 1, Math.round(options.startRow ?? 0)));
-  const endRow = Math.max(startRow, Math.min(height - 1, Math.round(options.endRow ?? height - 1)));
-  const seconds = (duration / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  if (pixels.length !== width * height) throw new Error('pixel data size mismatch');
+  // All operations (drawing taps and D-pad moves) use the same timing.
+  // Equal press and release durations guarantee the Switch registers each
+  // button press as a discrete event, preventing cursor acceleration or
+  // missed steps that cause pixel drift.
+  const pressMs = Math.max(120, Math.min(200, Math.round(options.pressDurationMs)));
+  const releaseMs = pressMs;
+  const pressSec = (pressMs / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  const releaseSec = pressSec;
+  const sec = (ms: number) => (ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  const preference = options.scanDirection ?? 'auto';
+  const scanDirection: 'row' | 'column' = preference === 'column' ? 'column' : preference === 'row' ? 'row' : resolveScanDirection(pixels, width, height);
+  const startBand = Math.max(0, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.startRow ?? 0)));
+  const endBand = Math.max(startBand, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.endRow ?? (scanDirection === 'row' ? height : width) - 1)));
+
   const lines: string[] = [];
   let inputCount = 0;
-  let currentX = 0;
-  let direction = 1;
+  let totalMs = 0;
   const plannedPixels = new Uint8Array(width * height);
+  const pixelTimestamps: number[] = [];
   const tap = (button: string) => {
-    lines.push(`${button} ${seconds}s`, `${seconds}s`);
+    lines.push(`${button} ${pressSec}s`, `${releaseSec}s`);
     inputCount += 2;
+    totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
   };
-  // Splatoon 3 clamps brush size and cursor movement at their boundaries, so
-  // repeated inputs make the starting state deterministic without user setup.
-  for (let i = 0; i < 3; i++) tap('L');
-  if (startRow === 0) tap('L_STICK_PRESS');
-  for (let i = 0; i < width + 2; i++) tap('DPAD_LEFT');
-  for (let i = 0; i < height + 2; i++) tap('DPAD_UP');
-  for (let y = 0; y < startRow; y++) tap('DPAD_DOWN');
-  const preparationDurationMs = inputCount * duration;
+  // D-pad moves use the same timing as drawing taps for reliability.
+  const moveTap = (button: string) => {
+    lines.push(`${button} ${pressSec}s`, `${releaseSec}s`);
+    inputCount += 2;
+    totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
+  };
+  const wait = (ms: number) => {
+    lines.push(`${(ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}s`);
+    inputCount += 1;
+    totalMs += nxbtMs(ms);
+  };
+  // Emit a LOOP block that repeats a single-button tap N times.
+  // NXBT expands this internally, dramatically reducing macro text size
+  // for long D-pad sequences (canvas repositioning, band advancement).
+  const loopTap = (button: string, count: number) => {
+    if (count <= 0) return;
+    if (count === 1) {
+      lines.push(`${button} ${pressSec}s`, `${releaseSec}s`);
+      inputCount += 2;
+      totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
+    } else {
+      lines.push(`LOOP ${count}`, `  ${button} ${pressSec}s`, `  ${releaseSec}s`);
+      inputCount += count * 2;
+      totalMs += count * (nxbtMs(pressMs) + nxbtMs(releaseMs));
+    }
+  };
 
-  for (let y = startRow; y <= endRow; y++) {
-    // Visit all 320 coordinates in every row. This fixed raster path means the
-    // preview matrix and the controller plan cannot disagree about position.
-    for (let step = 0; step < width; step++) {
-      const index = y * width + currentX;
-      if (pixels[index]) {
-        tap('A');
-        plannedPixels[index] = 1;
+  // Push the left stick to full deflection for ms, then release to center.
+  // The cursor slides to the canvas wall and stops, guaranteeing a known
+  // position that eliminates all accumulated D-pad drift from prior rows.
+  const stickHold = (stickSpec: string, ms: number) => {
+    lines.push(`${stickSpec} ${sec(ms)}s`);
+    inputCount += 1;
+    totalMs += nxbtMs(ms);
+    lines.push(`${STICK_CENTER} ${sec(100)}s`);
+    inputCount += 1;
+    totalMs += nxbtMs(100);
+  };
+
+  // --- Preparation ---
+  // Reset brush to smallest size.
+  loopTap('L', 3);
+  if (startBand === 0) {
+    tap('L_STICK_PRESS'); // L3 clears the canvas
+    wait(500); // let the clear animation finish
+  }
+  // Slam cursor to top-left corner using stick wall-bounce. Faster and
+  // more reliable than hundreds of D-pad taps — the cursor slides to the
+  // edge and stops automatically, guaranteeing position (0, 0).
+  stickHold(STICK_LEFT, 2500);
+  stickHold(STICK_UP, 2500);
+  if (scanDirection === 'row') {
+    loopTap('DPAD_DOWN', startBand);
+  } else {
+    loopTap('DPAD_RIGHT', startBand);
+  }
+  const preparationDurationMs = totalMs;
+
+  // --- Content-bounded serpentine drawing ---
+  // All positioning uses D-pad for reliable 1-pixel steps.
+  // Helper: move cursor horizontally from currentX to targetX.
+  const moveX = (curX: number, targetX: number): number => {
+    const delta = targetX - curX;
+    if (delta > 0) loopTap('DPAD_RIGHT', delta);
+    else if (delta < 0) loopTap('DPAD_LEFT', -delta);
+    return targetX;
+  };
+  // Helper: move cursor vertically from currentY to targetY.
+  const moveY = (curY: number, targetY: number): number => {
+    const delta = targetY - curY;
+    if (delta > 0) loopTap('DPAD_DOWN', delta);
+    else if (delta < 0) loopTap('DPAD_UP', -delta);
+    return targetY;
+  };
+  if (scanDirection === 'row') {
+    const firstBlack = new Int32Array(height).fill(-1);
+    const lastBlack = new Int32Array(height).fill(-1);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (pixels[y * width + x]) {
+          if (firstBlack[y] < 0) firstBlack[y] = x;
+          lastBlack[y] = x;
+        }
       }
-      if (step === width - 1) break;
-      tap(direction > 0 ? 'DPAD_RIGHT' : 'DPAD_LEFT');
-      currentX += direction;
     }
-    if (options.cautious) {
-      for (let i = 0; i < 2; i++) tap(direction > 0 ? 'DPAD_RIGHT' : 'DPAD_LEFT');
+    let currentX = 0;
+    for (let y = startBand; y <= endBand; y++) {
+      if (firstBlack[y] < 0) {
+        if (y < endBand) moveTap('DPAD_DOWN');
+        continue;
+      }
+      // Stick boundary reset: always slam cursor to the LEFT wall.
+      // Consistent wall eliminates any directional bias in stick behavior.
+      stickHold(STICK_LEFT, 2500);
+      currentX = 0;
+      currentX = moveX(currentX, firstBlack[y]);
+      const scanEnd = lastBlack[y];
+      const scanLen = scanEnd - currentX + 1;
+      for (let step = 0; step < scanLen; step++) {
+        const index = y * width + currentX;
+       if (pixels[index]) { tap('A'); plannedPixels[index] = 1; pixelTimestamps.push(totalMs - preparationDurationMs); }
+       if (step < scanLen - 1) {
+         moveTap('DPAD_RIGHT');
+          currentX += 1;
+        }
+      }
+      if (y < endBand) moveTap('DPAD_DOWN');
     }
-    if (y < endRow) tap('DPAD_DOWN');
-    direction *= -1;
+  } else {
+    const firstBlack = new Int32Array(width).fill(-1);
+    const lastBlack = new Int32Array(width).fill(-1);
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        if (pixels[y * width + x]) {
+          if (firstBlack[x] < 0) firstBlack[x] = y;
+          lastBlack[x] = y;
+        }
+      }
+    }
+    let currentY = 0;
+    for (let x = startBand; x <= endBand; x++) {
+      if (firstBlack[x] < 0) {
+        if (x < endBand) moveTap('DPAD_RIGHT');
+        continue;
+      }
+      // Stick boundary reset: always slam cursor to the TOP wall.
+      // Consistent wall eliminates any directional bias in stick behavior.
+      stickHold(STICK_UP, 2500);
+      currentY = 0;
+      currentY = moveY(currentY, firstBlack[x]);
+      const scanEnd = lastBlack[x];
+      const scanLen = scanEnd - currentY + 1;
+      for (let step = 0; step < scanLen; step++) {
+        const index = currentY * width + x;
+        if (pixels[index]) { tap('A'); plannedPixels[index] = 1; pixelTimestamps.push(totalMs - preparationDurationMs); }
+        if (step < scanLen - 1) {
+          moveTap('DPAD_DOWN');
+          currentY += 1;
+        }
+      }
+      if (x < endBand) moveTap('DPAD_RIGHT');
+    }
   }
 
+  // --- Verification ---
   let plannedBlackPixels = 0;
-  for (let y = startRow; y <= endRow; y++) {
-    for (let x = 0; x < width; x++) {
-      const index = y * width + x;
+  for (let y = startBand; y <= endBand; y++) {
+    const limit = scanDirection === 'row' ? width : height;
+    for (let i = 0; i < limit; i++) {
+      const index = scanDirection === 'row' ? y * width + i : i * width + y;
       const expected = pixels[index] ? 1 : 0;
-      if (plannedPixels[index] !== expected) throw new Error(`绘制路径校验失败：第 ${y + 1} 行，第 ${x + 1} 列`);
+      if (plannedPixels[index] !== expected) throw new Error(`drawing path verification failed at band ${y + 1}, position ${i + 1}`);
       plannedBlackPixels += expected;
     }
   }
-  if (options.autoSave) tap('MINUS');
+  if (options.autoSave) {
+    tap('PLUS');
+    wait(500);
+    moveTap('DPAD_RIGHT');
+    tap('A');
+  }
   const blackPixels = pixels.reduce((sum, value) => sum + value, 0);
+  // Compute optimization stats: how many bands were skipped and the
+  // content bounding box within the selected scan range.
+  const totalBands = endBand - startBand + 1;
+  let skippedBands = 0;
+  let contentFirstBand = -1;
+  let contentLastBand = -1;
+  for (let b = startBand; b <= endBand; b++) {
+    const hasContent = scanDirection === 'row'
+      ? pixels.slice(b * width, (b + 1) * width).some((v) => v)
+      : pixels.filter((_, i) => i % width === b).some((v) => v);
+    if (hasContent) {
+      if (contentFirstBand < 0) contentFirstBand = b;
+      contentLastBand = b;
+    } else {
+      skippedBands++;
+    }
+  }
   return {
-    macro: lines.join('\n'), inputCount, durationMs: inputCount * duration,
+    macro: lines.join('\n'), inputCount, durationMs: totalMs,
     preparationDurationMs, blackPixels, plannedBlackPixels,
-    pixelChecksum: pixelChecksum(pixels, width, height), verified: true
+    pixelChecksum: pixelChecksum(pixels, width, height), verified: true, scanDirection,
+    skippedBands, totalBands, contentFirstBand, contentLastBand, pixelTimestamps
   };
 }
 

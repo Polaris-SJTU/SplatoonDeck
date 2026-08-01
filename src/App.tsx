@@ -18,8 +18,9 @@ export default function App() {
   const [connection, setConnection] = useState<ConnectionState>('offline');
   const [controllerMessage, setControllerMessage] = useState('等待连接');
   const [macroProgress, setMacroProgress] = useState<number | null>(null);
+  const [macroElapsedMs, setMacroElapsedMs] = useState<number>(0);
   const [toast, setToast] = useState<string | null>(null);
-  const [version, setVersion] = useState('0.1.0');
+  const [version, setVersion] = useState('0.2.0');
   const drawingActive = macroProgress !== null && macroProgress < 1;
 
   const refreshStatus = useCallback(async () => {
@@ -47,7 +48,7 @@ export default function App() {
       if (event.type === 'disconnected') { setConnection('offline'); setControllerMessage('虚拟手柄已断开 · 蓝牙仍由 WSL 接管'); setMacroProgress(null); refreshStatus(); }
       if (event.type === 'error') { setConnection('error'); setControllerMessage('连接失败'); setToast(event.message || '控制器发生错误'); }
       if (event.type === 'macro_started') setMacroProgress(0);
-      if (event.type === 'macro_progress') setMacroProgress(event.progress ?? 0);
+      if (event.type === 'macro_progress') { setMacroProgress(event.progress ?? 0); setMacroElapsedMs(event.elapsedMs ?? 0); }
       if (event.type === 'macro_completed') { setMacroProgress(1); setToast('涂鸦绘制完成！'); }
       if (event.type === 'macro_stopped') { setMacroProgress(null); setToast('绘制已停止，可以调整起始行后继续'); }
     });
@@ -131,6 +132,7 @@ export default function App() {
           <StudioPage
             connection={connection}
             progress={macroProgress}
+            elapsedMs={macroElapsedMs}
             onNeedController={() => setPage('controller')}
             notify={setToast}
           />

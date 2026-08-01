@@ -72,7 +72,7 @@ if (import.meta.env.DEV && !window.squidSketch) {
       },
       onEvent: (listener) => { controllerListeners.add(listener); return () => controllerListeners.delete(listener); }
     },
-    app: { version: async () => '0.1.0-preview' }
+    app: { version: async () => '0.2.0-preview' }
   };
 }
 
