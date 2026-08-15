@@ -16,7 +16,7 @@ const mockAdapter: UsbDevice = {
 const status = (): SystemStatus => ({
   windows: { ok: true, version: '10.0.26100' },
   wsl: { installed: true, detail: 'Preview mode' },
-  distro: { installed: true, name: 'SquidSketch' },
+  distro: { installed: true, name: 'SplatoonDeck' },
   usbipd: { installed: true, devices: [mockAdapter], detail: '' },
   bluetooth: { attachedBusId, candidates: [mockAdapter] },
   installMarker: { preview: true },
@@ -24,8 +24,8 @@ const status = (): SystemStatus => ({
   restartReason: null
 });
 
-if (import.meta.env.DEV && !window.squidSketch) {
-  window.squidSketch = {
+if (import.meta.env.DEV && !window.splatoonDeck) {
+  window.splatoonDeck = {
     system: {
       getStatus: async () => status(),
       diagnose: async () => ({

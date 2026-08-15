@@ -45,7 +45,7 @@ export default function SetupPage({ status, refresh, notify }: Props) {
   const runDiagnostic = async () => {
     try {
       setBusy('diagnose');
-      const report = await window.squidSketch.system.diagnose();
+      const report = await window.splatoonDeck.system.diagnose();
       setDiagnostic(report);
       notify(report.ok ? t('兼容性诊断通过') : t('诊断完成：{{count}} 项需要处理', { count: report.failed }));
       await refresh();
@@ -64,7 +64,7 @@ export default function SetupPage({ status, refresh, notify }: Props) {
       </header>
 
       {installRestartPending && (
-        <div className="restart-banner"><strong>{t('需要重启 Windows')}</strong><span>{t('系统组件已启用。重启后再次点击“继续安装”即可，不会重复下载。')}</span></div>
+        <div className="restart-banner"><strong>{t('需要重启 Windows')}</strong><span>{t('前置依赖已准备完成。重启后点击“继续安装”，安装会从下一阶段继续。')}</span></div>
       )}
       {uninstallRestartPending && (
         <div className="restart-banner"><strong>{t('清理完成，等待重启')}</strong><span>{t('SplatoonDeck 添加的依赖已经移除；重启 Windows 后系统组件清理将完全生效。')}</span></div>
@@ -85,10 +85,10 @@ export default function SetupPage({ status, refresh, notify }: Props) {
               </div>
             ))}
           </div>
-          <button className="primary-button lime" disabled={Boolean(busy) || uninstallRestartPending} onClick={() => action('install', () => window.squidSketch.system.install())}>
+          <button className="primary-button lime" disabled={Boolean(busy) || uninstallRestartPending} onClick={() => action('install', () => window.splatoonDeck.system.install())}>
             {busy === 'install' ? <i className="spinner" /> : '→'} {t(uninstallRestartPending ? '重启后可重新安装' : allReady ? '检查 / 修复依赖' : installRestartPending ? '重启后继续安装' : '一键安装依赖')}
           </button>
-          <p className="fine-print">{t('安装需要管理员确认和网络连接；首次启用 WSL 可能要求重启。')}</p>
+          <p className="fine-print">{t('安装需要管理员确认和网络连接；首次安装会分阶段进行，并可能要求重启。')}</p>
         </article>
 
         <article className="card setup-card accent-purple">
@@ -99,16 +99,16 @@ export default function SetupPage({ status, refresh, notify }: Props) {
             {adapters.length ? adapters.map((adapter) => <option key={adapter.busId} value={adapter.busId}>{adapter.description} · {adapter.busId} · {adapter.state}</option>) : <option value="">{t('未检测到 USB 蓝牙适配器')}</option>}
           </select>
           {activeBusId ? (
-            <button className="primary-button purple" disabled={Boolean(busy)} onClick={() => action('release', () => window.squidSketch.system.releaseBluetooth())}>↩ {t('归还蓝牙给 Windows')}</button>
+            <button className="primary-button purple" disabled={Boolean(busy)} onClick={() => action('release', () => window.splatoonDeck.system.releaseBluetooth())}>↩ {t('归还蓝牙给 Windows')}</button>
           ) : (
-            <button className="primary-button purple" disabled={!allReady || !busId || Boolean(busy)} onClick={() => action('attach', () => window.squidSketch.system.attachBluetooth(busId))}>⚡ {t('临时接管蓝牙')}</button>
+            <button className="primary-button purple" disabled={!allReady || !busId || Boolean(busy)} onClick={() => action('attach', () => window.splatoonDeck.system.attachBluetooth(busId))}>⚡ {t('临时接管蓝牙')}</button>
           )}
           <p className="fine-print">{t('断开虚拟手柄不会归还蓝牙；请在此处点击“归还蓝牙给 Windows”，正常退出应用时也会自动归还。')}</p>
         </article>
 
         <article className="card safety-card">
           <div><span className="step-kicker">SAFETY</span><h2>{t('不留下一滴墨水')}</h2><p>{t('清理只移除本应用创建的 Linux 环境、WSL 运行时、USB 共享记录和 usbipd。安装前已有或正被其他软件使用的组件会保留。')}</p></div>
-          <button className="ghost-button danger" disabled={Boolean(busy) || dependenciesRemoved} onClick={() => action('uninstall', () => window.squidSketch.system.uninstall())}>{t(busy === 'uninstall' ? '正在清理…' : dependenciesRemoved ? '依赖已卸载' : '卸载应用依赖')}</button>
+          <button className="ghost-button danger" disabled={Boolean(busy) || dependenciesRemoved} onClick={() => action('uninstall', () => window.splatoonDeck.system.uninstall())}>{t(busy === 'uninstall' ? '正在清理…' : dependenciesRemoved ? '依赖已卸载' : '卸载应用依赖')}</button>
         </article>
       </div>
 

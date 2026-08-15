@@ -125,7 +125,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
     if (!macro) { notify(t('请先导入图片')); return; }
     setLaunching(true); setResumeEstimate(null);
     try {
-      const result = await window.squidSketch.controller.runMacro(macro.macro, {
+      const result = await window.splatoonDeck.controller.runMacro(macro.macro, {
         kind: 'drawing',
         durationMs: macro.durationMs, preparationDurationMs: macro.preparationDurationMs,
         inputCount: macro.inputCount, fileName, startRow, endRow,
@@ -163,7 +163,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
   const stop = async () => {
     const estimate = estimateResumeRow(startRow, endRow, drawingProgress);
     setResumeEstimate(estimate);
-    const result = await window.squidSketch.controller.stopMacro();
+    const result = await window.splatoonDeck.controller.stopMacro();
     if (!result.ok) notify(t('停止指令发送失败，请稍后重试'));
   };
   const changeStartRow = (value: number) => { setStartRow(value); if (value > endRow) setEndRow(value); };

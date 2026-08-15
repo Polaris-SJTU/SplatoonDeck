@@ -8,7 +8,7 @@ import { detectLocale, I18nProvider, translate } from './lib/i18n';
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 const startupLocale = detectLocale();
 
-if (!window.squidSketch) {
+if (!window.splatoonDeck) {
   root.render(
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#101014', color: '#f4f4f6', fontFamily: 'system-ui' }}>
       <div style={{ maxWidth: 520, padding: 32 }}>

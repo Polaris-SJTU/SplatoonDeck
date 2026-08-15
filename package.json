@@ -7,10 +7,11 @@
   "author": "SplatoonDeck contributors",
   "license": "MIT",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "build": "tsc --noEmit && vite build",
+    "build:native": "node scripts/build-native-helper.cjs",
+    "dev": "npm run build:native && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "npm run build:native && tsc --noEmit && vite build",
     "dist": "npm run build && electron-builder --win portable",
-    "test": "vitest run && node --test electron/system-manager.test.cjs"
+    "test": "npm run build:native && vitest run && node --test electron/system-manager.test.cjs"
   },
   "dependencies": {
     "react": "latest",
@@ -40,18 +41,21 @@
     "files": [
       "dist-ui/**/*",
       "electron/**/*",
-      "backend/**/*",
-      "scripts/**/*",
+      "!electron/**/*.test.cjs",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "backend",
-        "to": "backend"
+        "from": "backend/splatoondeck_bridge.py",
+        "to": "backend/splatoondeck_bridge.py"
       },
       {
-        "from": "scripts",
-        "to": "scripts"
+        "from": "scripts/linux-setup.sh",
+        "to": "scripts/linux-setup.sh"
+      },
+      {
+        "from": "native/bin/SplatoonDeck.Setup.exe",
+        "to": "native/SplatoonDeck.Setup.exe"
       },
       {
         "from": "build/icon.png",

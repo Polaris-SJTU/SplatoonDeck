@@ -1,6 +1,5 @@
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('node:path');
-const fs = require('node:fs');
 const { SystemManager } = require('./system-manager.cjs');
 const { ControllerService } = require('./controller-service.cjs');
 
@@ -8,21 +7,8 @@ let window;
 let system;
 let controller;
 
-const legacyUserData = path.join(app.getPath('appData'), 'Squid Sketch');
 const currentUserData = path.join(app.getPath('appData'), 'SplatoonDeck');
-let selectedUserData = currentUserData;
-if (!fs.existsSync(currentUserData) && fs.existsSync(legacyUserData)) {
-  try { fs.renameSync(legacyUserData, currentUserData); } catch { selectedUserData = legacyUserData; }
-} else if (fs.existsSync(currentUserData) && fs.existsSync(legacyUserData)) {
-  for (const file of ['install-state.json', 'bluetooth-session.json']) {
-    const legacyFile = path.join(legacyUserData, file);
-    const currentFile = path.join(currentUserData, file);
-    if (!fs.existsSync(currentFile) && fs.existsSync(legacyFile)) {
-      try { fs.copyFileSync(legacyFile, currentFile); } catch { /* Preserve the active data directory even if migration fails. */ }
-    }
-  }
-}
-app.setPath('userData', selectedUserData);
+app.setPath('userData', currentUserData);
 
 function send(channel, payload) {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload);

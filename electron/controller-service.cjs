@@ -19,13 +19,13 @@ class ControllerService {
   }
 
   get backendPath() {
-    const packaged = path.join(this.resourcesPath, 'backend', 'squid_bridge.py');
-    return fs.existsSync(packaged) ? packaged : path.join(__dirname, '..', 'backend', 'squid_bridge.py');
+    const packaged = path.join(this.resourcesPath, 'backend', 'splatoondeck_bridge.py');
+    return fs.existsSync(packaged) ? packaged : path.join(__dirname, '..', 'backend', 'splatoondeck_bridge.py');
   }
 
   async connect(options = {}) {
     if (this.process) return { ok: true, alreadyRunning: true };
-    const args = ['-d', DISTRO, '-u', 'root', '--', '/opt/squidsketch/venv/bin/python', windowsToWsl(this.backendPath)];
+    const args = ['-d', DISTRO, '-u', 'root', '--', '/opt/splatoondeck/venv/bin/python', windowsToWsl(this.backendPath)];
     if (options.reconnect !== false) args.push('--reconnect');
     this.process = spawn('wsl.exe', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.ready = false;

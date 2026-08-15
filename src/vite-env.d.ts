@@ -51,7 +51,7 @@ type ControllerEvent = {
 };
 
 interface Window {
-  squidSketch: {
+  splatoonDeck: {
     system: {
       getStatus(): Promise<SystemStatus>;
       diagnose(): Promise<DiagnosticReport>;

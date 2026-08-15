@@ -10,6 +10,7 @@ coverage/
 __pycache__/
 *.pyc
 build/packaged-icon-preview.png
+native/bin/
 
 # Code signing certificate
 build/code-signing.pfx

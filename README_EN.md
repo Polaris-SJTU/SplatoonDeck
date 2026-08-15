@@ -37,12 +37,12 @@ Download the current version: [`SplatoonDeck-0.3.0-portable.exe`](https://github
 
 SplatoonDeck is a single-file portable app and does not need a traditional installation. For later versions, visit [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest).
 
-`v0.3.0` adds timed controller macro recording with fixed-count or continuous playback and further improves environment management. Setup and cleanup windows now show every step and command output in real time; on failure, the window stays open until you confirm. The app distinguishes a restart needed to continue setup from one needed to finish cleanup. If SplatoonDeck introduced WSL on a previously clean PC, cleanup also removes that WSL runtime while preserving pre-existing or actively shared WSL environments. See the complete [v0.3.0 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0).
+`v0.3.0` adds timed controller macro recording with fixed-count or continuous playback and rebuilds environment management around resumable stages. Setup shows live steps, progress, and command output, while closing its window also cancels child processes. The Ubuntu environment download supports resume, automatic retries, and SHA-256 verification. Cleanup removes only components added by SplatoonDeck while preserving pre-existing or shared WSL environments. See the complete [v0.3.0 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0).
 
 ### Connect to Switch 2 for the first time
 
 1. Run SplatoonDeck and open **Setup Bay**. Use the language selector at the bottom-left to switch between Simplified Chinese, English, and Japanese; your choice is saved automatically.
-2. Select **Check / Repair Dependencies** and follow the prompts to prepare WSL 2, the dedicated environment, and Bluetooth components. If Windows asks for a restart, restart it, reopen SplatoonDeck, and select **Check / Repair Dependencies** again to finish the remaining steps.
+2. Select **Check / Repair Dependencies**. SplatoonDeck first prepares WSL, Windows features, and Bluetooth components. If prompted, restart Windows, reopen SplatoonDeck, and select **Continue Installation** to resume from the next stage.
 3. Run the compatibility diagnostics and confirm that WSL, USB/IP, BlueZ, NXBT, and the Bluetooth controller are ready.
 4. Select the detected Bluetooth controller and choose **Temporarily Attach Bluetooth**.
 5. On Switch 2, open **Controllers → Change Grip/Order**.
@@ -129,6 +129,8 @@ Import an image, tune its monochrome pixel treatment, preview the `320 × 120` g
 - Automatic detection of USB Bluetooth controllers.
 - In-app installation, checking, repair, and cleanup of required components.
 - Live steps and command output in setup and cleanup windows; failures remain visible until confirmation and include the log location.
+- Setup and cleanup are single-instance operations; closing the progress window also stops the DISM, winget, and other child processes it started.
+- The Ubuntu environment download supports resume, four automatic retries, and official SHA-256 verification, so incomplete files are never imported.
 - Separate setup and cleanup restart states, avoiding a misleading Continue Installation prompt after removal.
 - Removal of the WSL runtime and Windows features introduced by SplatoonDeck on a previously WSL-free PC, while preserving existing environments and other distributions.
 - Setup progress and component ownership are preserved across restarts, so the app can safely continue setup or clean up later.
@@ -190,11 +192,11 @@ Start with the default `45 ms` interval and draw the built-in `8 × 7` calibrati
 
 ### How do I remove the environment created by SplatoonDeck?
 
-Return Bluetooth in Setup Bay, then select **Uninstall App Dependencies**. SplatoonDeck uses its saved installation record to return and unshare Bluetooth, remove the dedicated Linux environment, and uninstall usbipd when the app installed it. Shared Windows features enabled by SplatoonDeck are disabled only when no other WSL distributions remain. If the app asks for a restart, restart Windows once to finish the cleanup.
+Return Bluetooth in Setup Bay, then select **Uninstall App Dependencies**. SplatoonDeck uses its saved installation record to return and unshare Bluetooth, remove the dedicated Linux environment, and uninstall usbipd when the app installed it. If the PC did not have WSL beforehand and no other WSL distributions remain, cleanup also removes the WSL runtime and Windows features added by SplatoonDeck. If the app asks for a restart, restart Windows once to finish.
 
 ## How it works and compatibility
 
-The Windows app handles image processing, keyboard and mouse input, and drawing progress. A dedicated WSL 2 environment runs BlueZ and the virtual Pro Controller. SplatoonDeck temporarily attaches the Bluetooth controller through USB/IP, while NXBT and a Python bridge send buttons, sticks, and drawing paths to Switch 2.
+The Windows app handles image processing, keyboard and mouse input, and drawing progress. A bundled native setup helper handles elevation and environment management without PowerShell. A dedicated WSL 2 environment runs BlueZ and the virtual Pro Controller. SplatoonDeck temporarily attaches the Bluetooth controller through USB/IP, while NXBT and a Python bridge send buttons, sticks, and drawing paths to Switch 2.
 
 Before drawing, the image is converted into an exact `320 × 120` one-bit matrix. The preview, drawing path, and progress data are all generated from that same matrix. During a drawing, SplatoonDeck sends complete controller-state reports and recalibrates against a canvas edge for every non-empty row or column to reduce accumulated error.
 
@@ -231,7 +233,8 @@ SplatoonDeck/
 ├─ src/        App UI, input mappings, and image processing
 ├─ electron/   Windows integration, Bluetooth, and app lifecycle
 ├─ backend/    Virtual-controller bridge
-├─ scripts/    Environment setup and cleanup scripts
+├─ native/     Native environment-management helper
+├─ scripts/    WSL-internal environment setup
 ├─ assets/     Brand source files
 └─ build/      App icons
 ```

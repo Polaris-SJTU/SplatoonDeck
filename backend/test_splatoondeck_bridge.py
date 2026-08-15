@@ -1,6 +1,6 @@
 import unittest
 
-from squid_bridge import macro_playback_policy, should_repeat_macro
+from splatoondeck_bridge import macro_playback_policy, should_repeat_macro
 
 
 class MacroPlaybackPolicyTests(unittest.TestCase):

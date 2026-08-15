@@ -40,10 +40,8 @@ type Props = {
   notify(message: string): void;
 };
 
-const BINDINGS_STORAGE_KEY = 'squid-sketch.controller-bindings.v3';
-const LEGACY_BINDINGS_STORAGE_KEY = 'squid-sketch.controller-bindings.v2';
-const MOUSE_MOTION_STORAGE_KEY = 'squid-sketch.mouse-motion.v3';
-const LEGACY_MOUSE_MOTION_STORAGE_KEY = 'squid-sketch.mouse-motion.v2';
+const BINDINGS_STORAGE_KEY = 'splatoondeck.controller-bindings.v1';
+const MOUSE_MOTION_STORAGE_KEY = 'splatoondeck.mouse-motion.v1';
 const CONTROLLER_MACRO_STORAGE_KEY = 'splatoondeck.controller-macro.v1';
 const CONTROLLER_PLAYBACK_STORAGE_KEY = 'splatoondeck.controller-playback.v1';
 const MOUSE_REPORT_INTERVAL_MS = 8;
@@ -124,13 +122,11 @@ function emptyBindings(): ControllerBindings {
 
 function loadInitialBindings() {
   const current = localStorage.getItem(BINDINGS_STORAGE_KEY);
-  if (current) return loadBindings(current);
-  const legacy = localStorage.getItem(LEGACY_BINDINGS_STORAGE_KEY);
-  return legacy ? assignBinding(loadBindings(legacy), 'L_STICK_PRESS', 'keyboard', 'KeyQ') : createDefaultBindings();
+  return current ? loadBindings(current) : createDefaultBindings();
 }
 
 function loadInitialMouseMotion() {
-  return loadMouseMotionSettings(localStorage.getItem(MOUSE_MOTION_STORAGE_KEY) ?? localStorage.getItem(LEGACY_MOUSE_MOTION_STORAGE_KEY));
+  return loadMouseMotionSettings(localStorage.getItem(MOUSE_MOTION_STORAGE_KEY));
 }
 
 function loadInitialControllerMacro() {
@@ -188,12 +184,12 @@ export default function ControllerPage({ connection, message, inputLocked, playb
   }, []);
 
   const sendButton = useCallback((button: string, pressed: boolean) => {
-    window.squidSketch.controller.button(button, pressed);
+    window.splatoonDeck.controller.button(button, pressed);
     recordButton(button, pressed);
   }, [recordButton]);
 
   const sendStick = useCallback((stick: 'L_STICK' | 'R_STICK', x: number, y: number) => {
-    window.squidSketch.controller.stick(stick, x, y);
+    window.splatoonDeck.controller.stick(stick, x, y);
     recordStick(stick, x, y);
   }, [recordStick]);
 
@@ -278,7 +274,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
     if (document.pointerLockElement) document.exitPointerLock();
     setPlaybackLaunching(true);
     try {
-      const result = await window.squidSketch.controller.runMacro(playback.macro, {
+      const result = await window.splatoonDeck.controller.runMacro(playback.macro, {
         kind: 'controller-recording',
         durationMs: playbackSettings.mode === 'count' ? playback.durationMs * playbackSettings.repeatCount : playback.durationMs,
         cycleDurationMs: playback.durationMs,
@@ -297,7 +293,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
 
   const stopPlayback = async () => {
     try {
-      const result = await window.squidSketch.controller.stopMacro();
+      const result = await window.splatoonDeck.controller.stopMacro();
       if (!result.ok) notify(t('宏回放停止失败'));
     } catch (error) {
       notify(tx(error instanceof Error ? error.message : String(error)));

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """JSON-lines bridge between Electron and NXBT.
 
-The process runs as root inside the dedicated SquidSketch WSL distribution.
+The process runs as root inside the dedicated SplatoonDeck WSL distribution.
 Only stdout JSON messages are part of the protocol; diagnostics go to stderr.
 """
 

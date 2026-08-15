@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 
 const execFileAsync = promisify(execFile);
-const DISTRO = 'SquidSketch';
+const DISTRO = 'SplatoonDeck';
 
 function cleanOutput(value = '') {
   return String(value).replace(/^\uFEFF/, '').replace(/\0/g, '').trim();
@@ -41,7 +41,7 @@ function decodeOutput(value) {
 async function capture(file, args, options = {}) {
   try {
     const result = await execFileAsync(file, args, {
-      windowsHide: true,
+      windowsHide: options.windowsHide ?? true,
       timeout: options.timeout || 15_000,
       maxBuffer: 4 * 1024 * 1024,
       encoding: 'buffer'
@@ -76,42 +76,8 @@ function restartStillPending(marker, markerModifiedAt, bootedAt) {
   return bootedAt <= markerModifiedAt;
 }
 
-function quotePowerShell(value = '') {
-  return String(value).replace(/'/g, "''");
-}
-
-function buildDependencyChildCommand({ script, statePath, logPath, uninstall = false }) {
-  const action = uninstall ? 'Uninstalling dependencies' : 'Installing dependencies';
-  const finished = uninstall ? 'Dependency cleanup completed.' : 'Dependency setup completed.';
-  return [
-    "$ErrorActionPreference = 'Stop'",
-    "$ProgressPreference = 'Continue'",
-    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-    `$Host.UI.RawUI.WindowTitle = 'SplatoonDeck - ${action}'`,
-    `New-Item -ItemType File -Force -Path '${quotePowerShell(logPath)}' | Out-Null`,
-    `Write-Host 'SplatoonDeck - ${action}' -ForegroundColor Cyan`,
-    "Write-Host 'Keep this window open while the operation is running.' -ForegroundColor DarkGray",
-    "Write-Host ''",
-    'try {',
-    `  & '${quotePowerShell(script)}' -StatePath '${quotePowerShell(statePath)}' *>&1 | Tee-Object -LiteralPath '${quotePowerShell(logPath)}' -Append`,
-    "  if (-not $?) { throw 'The dependency script did not complete successfully.' }",
-    "  Write-Host ''",
-    `  Write-Host '[DONE] ${finished}' -ForegroundColor Green`,
-    `  Write-Host 'Log: ${quotePowerShell(logPath)}' -ForegroundColor DarkGray`,
-    '  Start-Sleep -Seconds 2',
-    '  exit 0',
-    '} catch {',
-    '  $detail = ($_ | Out-String).Trim()',
-    `  $detail | Add-Content -LiteralPath '${quotePowerShell(logPath)}' -Encoding utf8`,
-    "  Write-Host ''",
-    "  Write-Host '[FAILED] The operation could not be completed.' -ForegroundColor Red",
-    '  Write-Host $detail -ForegroundColor Red',
-    `  Write-Host 'Log: ${quotePowerShell(logPath)}' -ForegroundColor Yellow`,
-    "  Write-Host ''",
-    "  [void](Read-Host 'Press Enter to close this window')",
-    '  exit 1',
-    '}'
-  ].join('; ');
+function hasInstalledEnvironment(marker) {
+  return Boolean(marker?.lifecycle === 'installed' && marker?.completed !== false);
 }
 
 function parseUsbipdState(output) {
@@ -186,6 +152,11 @@ class SystemManager {
     const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
     const installed = path.join(programFiles, 'usbipd-win', 'usbipd.exe');
     return fs.existsSync(installed) ? installed : 'usbipd.exe';
+  }
+
+  get setupHelperExecutable() {
+    const packaged = path.join(this.resourcesPath, 'native', 'SplatoonDeck.Setup.exe');
+    return fs.existsSync(packaged) ? packaged : path.join(__dirname, '..', 'native', 'bin', 'SplatoonDeck.Setup.exe');
   }
 
   readJson(file) {
@@ -276,23 +247,26 @@ class SystemManager {
     return null;
   }
 
-  async getStatus() {
-    const [wslStatus, distros, usb, windows, usbVersion] = await Promise.all([
-      capture('wsl.exe', ['--status']),
-      capture('wsl.exe', ['--list', '--quiet']),
+  async getStatus({ probeWsl = false } = {}) {
+    const marker = this.reconcileRestartMarker();
+    const environmentInstalled = hasInstalledEnvironment(marker);
+    const skippedWslProbe = Promise.resolve({ ok: false, stdout: '', stderr: '' });
+    const [wslStatus, distros, usb, usbVersion] = await Promise.all([
+      probeWsl ? capture('wsl.exe', ['--status']) : skippedWslProbe,
+      probeWsl ? capture('wsl.exe', ['--list', '--quiet']) : skippedWslProbe,
       this.getUsbDevices(),
-      capture('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Environment]::OSVersion.Version.ToString()']),
       capture(this.usbipdExecutable, ['--version'])
     ]);
 
     const distroNames = distros.stdout.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-    const marker = this.reconcileRestartMarker();
     const attachedBusId = this.reconcileSession(usb.devices, usb.ok && usb.source === 'state');
     const wslDetail = wslStatus.stdout || wslStatus.stderr;
+    const probedWslInstalled = Boolean((wslStatus.ok || distros.ok) && !isWslUnavailable(wslDetail));
+    const probedDistroInstalled = distroNames.some((x) => x.toLowerCase() === DISTRO.toLowerCase());
     return {
-      windows: { ok: windows.ok, version: windows.stdout || 'Unknown' },
-      wsl: { installed: Boolean((wslStatus.ok || distros.ok) && !isWslUnavailable(wslDetail)), detail: wslDetail },
-      distro: { installed: distroNames.some((x) => x.toLowerCase() === DISTRO.toLowerCase()), name: DISTRO },
+      windows: { ok: true, version: os.release() },
+      wsl: { installed: probeWsl ? probedWslInstalled : environmentInstalled, detail: wslDetail },
+      distro: { installed: probeWsl ? probedDistroInstalled : environmentInstalled, name: DISTRO },
       usbipd: { installed: usb.ok, version: usbVersion.stdout, devices: usb.devices, detail: usb.detail, source: usb.source },
       bluetooth: {
         attachedBusId,
@@ -305,55 +279,44 @@ class SystemManager {
     };
   }
 
-  async runScript(name) {
-    const script = path.join(this.scriptRoot, name);
-    if (!fs.existsSync(script)) throw new Error(`缺少安装脚本：${script}`);
-    const logPath = path.join(this.userDataPath, `${name}-${Date.now()}.log`);
+  async runSetupAction(action) {
+    const helper = this.setupHelperExecutable;
+    if (!fs.existsSync(helper)) throw new Error(`缺少安装辅助程序：${helper}`);
+    const logPath = path.join(this.userDataPath, `${action}-dependencies-${Date.now()}.log`);
+    const linuxSetup = path.join(this.scriptRoot, 'linux-setup.sh');
     fs.mkdirSync(this.userDataPath, { recursive: true });
-    const childCommand = buildDependencyChildCommand({
-      script,
-      statePath: this.markerPath,
-      logPath,
-      uninstall: name.includes('uninstall')
-    });
-    const encodedCommand = Buffer.from(childCommand, 'utf16le').toString('base64');
-    const elevatedCommand = [
-      "$ErrorActionPreference = 'Stop'",
-      'try {',
-      `  $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encodedCommand}') -Verb RunAs -Wait -PassThru -ErrorAction Stop`,
-      '  if ($null -eq $p) { exit 1 }',
-      '  exit [int]$p.ExitCode',
-      '} catch {',
-      '  Write-Error ($_ | Out-String)',
-      '  exit 1',
-      '}'
-    ].join('; ');
     const args = [
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-      elevatedCommand
+      action,
+      '--state', this.markerPath,
+      '--session', this.sessionPath,
+      '--linux-setup', linuxSetup,
+      '--log', logPath
     ];
-    this.emit({ phase: 'started', message: name.includes('uninstall') ? '正在清理应用依赖…' : '正在安装应用依赖…', logPath });
-    const result = await capture('powershell.exe', args, { timeout: 30 * 60_000 });
+    this.emit({ phase: 'started', message: action === 'uninstall' ? '正在清理应用依赖…' : '正在安装应用依赖…', logPath });
+    const result = await capture(helper, args, { timeout: 30 * 60_000, windowsHide: false });
     const outerDetail = [result.stdout, result.stderr].filter(Boolean).join('\n');
     if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, outerDetail, 'utf8');
     else if (outerDetail) fs.appendFileSync(logPath, `\n${outerDetail}\n`, 'utf8');
-    if (result.ok && name.includes('uninstall')) this.clearSession();
+    if (result.ok && action === 'uninstall') this.clearSession();
     this.emit({ phase: result.ok ? 'completed' : 'failed', message: result.ok ? '操作已完成' : '操作失败，请查看日志', logPath });
     return { ...result, logPath, status: await this.getStatus() };
   }
 
-  install() { return this.runScript('install-dependencies.ps1'); }
-  uninstall() { return this.runScript('uninstall-dependencies.ps1'); }
+  install() { return this.runSetupAction('install'); }
+  uninstall() { return this.runSetupAction('uninstall'); }
 
   async elevateUsbipd(args) {
     for (const arg of args) {
       if (!/^[a-z-]+$|^\d+-\d+(?:\.\d+)*$/i.test(arg)) throw new Error('无效的 USB/IP 参数');
     }
-    const joined = args.map((x) => `'${x}'`).join(',');
-    const executable = this.usbipdExecutable.replace(/'/g, "''");
-    return capture('powershell.exe', ['-NoProfile', '-Command',
-      `& { $p = Start-Process -FilePath '${executable}' -ArgumentList @(${joined}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode }`],
-      { timeout: 120_000 });
+    const helper = this.setupHelperExecutable;
+    if (!fs.existsSync(helper)) throw new Error(`缺少安装辅助程序：${helper}`);
+    const logPath = path.join(this.userDataPath, `usbipd-${Date.now()}.log`);
+    const encodedArgs = Buffer.from(JSON.stringify(args), 'utf8').toString('base64');
+    return capture(helper, [
+      'usbipd', '--state', this.markerPath, '--session', this.sessionPath,
+      '--log', logPath, '--usbipd', this.usbipdExecutable, '--usbipd-args', encodedArgs
+    ], { timeout: 120_000, windowsHide: false });
   }
 
   async attachBluetooth(busId) {
@@ -378,7 +341,7 @@ class SystemManager {
     if (!attach.ok) throw new Error(attach.stderr || '蓝牙接管失败');
     this.writeSession(device);
     this.emit({ phase: 'attached', message: '蓝牙已由 WSL 接管', busId });
-    return this.getStatus();
+    return this.getStatus({ probeWsl: true });
   }
 
   async releaseBluetooth() {
@@ -410,7 +373,7 @@ class SystemManager {
 
   async diagnose() {
     this.emit({ phase: 'diagnosing', message: '正在检查 WSL、USB/IP、BlueZ 与 NXBT…' });
-    const status = await this.getStatus();
+    const status = await this.getStatus({ probeWsl: true });
     const checks = [
       { id: 'windows', label: 'Windows', ok: status.windows.ok, detail: status.windows.version },
       { id: 'wsl', label: 'WSL 2', ok: status.wsl.installed, detail: status.wsl.detail || '未安装' },
@@ -426,7 +389,7 @@ class SystemManager {
       const [kernel, bluez, nxbt, controller, usb] = await Promise.all([
         capture('wsl.exe', [...base, 'uname', '-r'], { timeout: 10_000 }),
         capture('wsl.exe', [...base, 'systemctl', 'is-active', 'bluetooth.service'], { timeout: 10_000 }),
-        capture('wsl.exe', [...base, '/opt/squidsketch/venv/bin/python', '-c', "import nxbt; print(getattr(nxbt, '__version__', 'installed'))"], { timeout: 10_000 }),
+        capture('wsl.exe', [...base, '/opt/splatoondeck/venv/bin/python', '-c', "import nxbt; print(getattr(nxbt, '__version__', 'installed'))"], { timeout: 10_000 }),
         attached ? capture('wsl.exe', [...base, 'bluetoothctl', 'list'], { timeout: 10_000 }) : skipped,
         attached ? capture('wsl.exe', [...base, 'lsusb'], { timeout: 10_000 }) : skipped
       ]);
@@ -446,4 +409,4 @@ class SystemManager {
   }
 }
 
-module.exports = { SystemManager, DISTRO, buildDependencyChildCommand, capture, decodeOutput, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, vidPidFromInstanceId };
+module.exports = { SystemManager, DISTRO, capture, decodeOutput, hasInstalledEnvironment, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, vidPidFromInstanceId };

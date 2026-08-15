@@ -31,7 +31,7 @@ export default function App() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      setSystemStatus(await window.squidSketch.system.getStatus());
+      setSystemStatus(await window.splatoonDeck.system.getStatus());
     } catch (error) {
       setToast(tx(error instanceof Error ? error.message : String(error)));
     }
@@ -39,12 +39,12 @@ export default function App() {
 
   useEffect(() => {
     refreshStatus();
-    window.squidSketch.app.version().then(setVersion).catch(() => undefined);
-    const offSystem = window.squidSketch.system.onProgress((event) => {
+    window.splatoonDeck.app.version().then(setVersion).catch(() => undefined);
+    const offSystem = window.splatoonDeck.system.onProgress((event) => {
       if (typeof event.message === 'string') setToast(tx(event.message));
       if (event.phase === 'released' || event.phase === 'attached' || event.phase === 'completed') refreshStatus();
     });
-    const offController = window.squidSketch.controller.onEvent((event) => {
+    const offController = window.splatoonDeck.controller.onEvent((event) => {
       if (event.message && ['connecting', 'starting', 'pairing', 'connected', 'disconnecting'].includes(event.type)) {
         setControllerMessage(event.message);
       }
@@ -99,10 +99,10 @@ export default function App() {
       if (!latest?.bluetooth.attachedBusId) {
         const adapter = latest?.bluetooth.candidates[0];
         if (!adapter) throw new Error(t('没有检测到可接管的内置 USB 蓝牙适配器'));
-        latest = await window.squidSketch.system.attachBluetooth(adapter.busId);
+        latest = await window.splatoonDeck.system.attachBluetooth(adapter.busId);
         setSystemStatus(latest);
       }
-      await window.squidSketch.controller.connect({ reconnect: true });
+      await window.splatoonDeck.controller.connect({ reconnect: true });
     } catch (error) {
       setConnection('error');
       setToast(tx(error instanceof Error ? error.message : String(error)));
@@ -110,7 +110,7 @@ export default function App() {
   };
 
   const disconnectController = async () => {
-    await window.squidSketch.controller.disconnect();
+    await window.splatoonDeck.controller.disconnect();
     setConnection('offline');
     setControllerMessage('虚拟手柄已断开 · 蓝牙仍由 WSL 接管');
     await refreshStatus();

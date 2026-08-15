@@ -6,7 +6,7 @@ const subscribe = (channel, listener) => {
   return () => ipcRenderer.removeListener(channel, wrapped);
 };
 
-contextBridge.exposeInMainWorld('squidSketch', {
+contextBridge.exposeInMainWorld('splatoonDeck', {
   system: {
     getStatus: () => ipcRenderer.invoke('system:get-status'),
     diagnose: () => ipcRenderer.invoke('system:diagnose'),
