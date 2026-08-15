@@ -2,7 +2,7 @@
   "name": "splatoon-deck",
   "version": "0.2.1",
   "private": true,
-  "description": "Zero-hardware Switch 2 controller and Splatoon drawing companion for Windows",
+  "description": "Use keyboard and mouse with Switch 2, and draw imported images in Splatoon 3",
   "main": "electron/main.cjs",
   "author": "SplatoonDeck contributors",
   "license": "MIT",
