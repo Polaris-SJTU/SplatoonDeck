@@ -65,6 +65,10 @@ function vidPidFromInstanceId(instanceId = '') {
   return match ? `${match[1].toLowerCase()}:${match[2].toLowerCase()}` : '';
 }
 
+function isWslUnavailable(detail = '') {
+  return /not enabled|is disabled|cannot start|not supported with your current|未启用|无法启动|当前计算机配置不支持|有効になっていません|無効になっています|起動できません|現在のコンピューター構成ではサポートされていません/i.test(detail);
+}
+
 function parseUsbipdState(output) {
   let parsed;
   try { parsed = JSON.parse(cleanOutput(output)); } catch { return []; }
@@ -133,6 +137,12 @@ class SystemManager {
     return fs.existsSync(packaged) ? packaged : path.join(__dirname, '..', 'scripts');
   }
 
+  get usbipdExecutable() {
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const installed = path.join(programFiles, 'usbipd-win', 'usbipd.exe');
+    return fs.existsSync(installed) ? installed : 'usbipd.exe';
+  }
+
   readJson(file) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return null; }
   }
@@ -179,9 +189,9 @@ class SystemManager {
   }
 
   async getUsbDevices() {
-    const state = await capture('usbipd.exe', ['state']);
+    const state = await capture(this.usbipdExecutable, ['state']);
     if (state.ok) return { ok: true, devices: parseUsbipdState(state.stdout), detail: state.stderr, source: 'state' };
-    const list = await capture('usbipd.exe', ['list']);
+    const list = await capture(this.usbipdExecutable, ['list']);
     return { ok: list.ok, devices: parseUsbipdList(list.stdout), detail: list.stderr || state.stderr, source: 'list' };
   }
 
@@ -195,10 +205,10 @@ class SystemManager {
       else this.sessionBusId = device.busId;
       return device.busId;
     }
-    // If structured state is available, an absent/non-attached device means Windows
-    // already owns it again (for example after reboot or unplugging).
-    if (usbipdAvailable) this.clearSession();
-    return usbipdAvailable ? null : record.busId;
+    // An unavailable usbipd installation cannot own an attached device. Clear stale
+    // sessions after dependency removal instead of showing a phantom connection.
+    this.clearSession();
+    return null;
   }
 
   async getStatus() {
@@ -207,15 +217,16 @@ class SystemManager {
       capture('wsl.exe', ['--list', '--quiet']),
       this.getUsbDevices(),
       capture('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Environment]::OSVersion.Version.ToString()']),
-      capture('usbipd.exe', ['--version'])
+      capture(this.usbipdExecutable, ['--version'])
     ]);
 
     const distroNames = distros.stdout.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
     const marker = this.readMarker();
     const attachedBusId = this.reconcileSession(usb.devices, usb.ok && usb.source === 'state');
+    const wslDetail = wslStatus.stdout || wslStatus.stderr;
     return {
       windows: { ok: windows.ok, version: windows.stdout || 'Unknown' },
-      wsl: { installed: wslStatus.ok || distros.ok, detail: wslStatus.stdout || wslStatus.stderr },
+      wsl: { installed: Boolean((wslStatus.ok || distros.ok) && !isWslUnavailable(wslDetail)), detail: wslDetail },
       distro: { installed: distroNames.some((x) => x.toLowerCase() === DISTRO.toLowerCase()), name: DISTRO },
       usbipd: { installed: usb.ok, version: usbVersion.stdout, devices: usb.devices, detail: usb.detail, source: usb.source },
       bluetooth: {
@@ -232,15 +243,42 @@ class SystemManager {
     const script = path.join(this.scriptRoot, name);
     if (!fs.existsSync(script)) throw new Error(`缺少安装脚本：${script}`);
     const logPath = path.join(this.userDataPath, `${name}-${Date.now()}.log`);
-    const childCommand = `& '${script.replace(/'/g, "''")}' -StatePath '${this.markerPath.replace(/'/g, "''")}'; exit $LASTEXITCODE`;
+    fs.mkdirSync(this.userDataPath, { recursive: true });
+    const quote = (value) => value.replace(/'/g, "''");
+    const childCommand = [
+      "$ErrorActionPreference = 'Stop'",
+      'try {',
+      `  & '${quote(script)}' -StatePath '${quote(this.markerPath)}' *>&1 | Out-File -LiteralPath '${quote(logPath)}' -Encoding utf8`,
+      '  if (-not $?) { exit 1 }',
+      '  if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit [int]$LASTEXITCODE }',
+      '  exit 0',
+      '} catch {',
+      `  ($_ | Out-String) | Add-Content -LiteralPath '${quote(logPath)}' -Encoding utf8`,
+      '  exit 1',
+      '}'
+    ].join('; ');
     const encodedCommand = Buffer.from(childCommand, 'utf16le').toString('base64');
+    const elevatedCommand = [
+      "$ErrorActionPreference = 'Stop'",
+      'try {',
+      `  $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encodedCommand}') -Verb RunAs -Wait -PassThru -ErrorAction Stop`,
+      '  if ($null -eq $p) { exit 1 }',
+      '  exit [int]$p.ExitCode',
+      '} catch {',
+      '  Write-Error ($_ | Out-String)',
+      '  exit 1',
+      '}'
+    ].join('; ');
     const args = [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-      `& { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-EncodedCommand','${encodedCommand}') -Verb RunAs -Wait -PassThru; exit $p.ExitCode }`
+      elevatedCommand
     ];
     this.emit({ phase: 'started', message: name.includes('uninstall') ? '正在清理应用依赖…' : '正在安装应用依赖…', logPath });
     const result = await capture('powershell.exe', args, { timeout: 30 * 60_000 });
-    fs.writeFileSync(logPath, [result.stdout, result.stderr].filter(Boolean).join('\n'), 'utf8');
+    const outerDetail = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, outerDetail, 'utf8');
+    else if (outerDetail) fs.appendFileSync(logPath, `\n${outerDetail}\n`, 'utf8');
+    if (result.ok && name.includes('uninstall')) this.clearSession();
     this.emit({ phase: result.ok ? 'completed' : 'failed', message: result.ok ? '操作已完成' : '操作失败，请查看日志', logPath });
     return { ...result, logPath, status: await this.getStatus() };
   }
@@ -253,8 +291,9 @@ class SystemManager {
       if (!/^[a-z-]+$|^\d+-\d+(?:\.\d+)*$/i.test(arg)) throw new Error('无效的 USB/IP 参数');
     }
     const joined = args.map((x) => `'${x}'`).join(',');
+    const executable = this.usbipdExecutable.replace(/'/g, "''");
     return capture('powershell.exe', ['-NoProfile', '-Command',
-      `& { $p = Start-Process -FilePath 'usbipd.exe' -ArgumentList @(${joined}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode }`],
+      `& { $p = Start-Process -FilePath '${executable}' -ArgumentList @(${joined}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode }`],
       { timeout: 120_000 });
   }
 
@@ -276,7 +315,7 @@ class SystemManager {
     // Keep the distribution alive before attaching, as recommended by usbipd-win.
     await capture('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'true']);
     this.emit({ phase: 'attaching', message: '正在把蓝牙临时交给 WSL…' });
-    const attach = await capture('usbipd.exe', ['attach', '--wsl', '--busid', busId], { timeout: 120_000 });
+    const attach = await capture(this.usbipdExecutable, ['attach', '--wsl', '--busid', busId], { timeout: 120_000 });
     if (!attach.ok) throw new Error(attach.stderr || '蓝牙接管失败');
     this.writeSession(device);
     this.emit({ phase: 'attached', message: '蓝牙已由 WSL 接管', busId });
@@ -297,7 +336,7 @@ class SystemManager {
     }
 
     const currentBusId = device?.busId || busId;
-    const result = await capture('usbipd.exe', ['detach', '--busid', currentBusId], { timeout: 30_000 });
+    const result = await capture(this.usbipdExecutable, ['detach', '--busid', currentBusId], { timeout: 30_000 });
     if (result.ok) this.clearSession();
     this.emit({ phase: result.ok ? 'released' : 'failed', message: result.ok ? '蓝牙已归还 Windows' : '蓝牙归还失败', busId: currentBusId });
     return result;
@@ -306,7 +345,7 @@ class SystemManager {
   releaseBluetoothSync() {
     const busId = this.sessionBusId || this.readSession()?.busId;
     if (!busId) return;
-    const result = spawnSync('usbipd.exe', ['detach', '--busid', busId], { windowsHide: true, timeout: 15_000 });
+    const result = spawnSync(this.usbipdExecutable, ['detach', '--busid', busId], { windowsHide: true, timeout: 15_000 });
     if (result.status === 0) this.clearSession();
   }
 
@@ -322,16 +361,22 @@ class SystemManager {
     ];
 
     if (status.distro.installed) {
-      const linux = await capture('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'bash', '-lc',
-        "printf 'KERNEL='; uname -r; printf '\\nSYSTEMD='; systemctl is-system-running 2>/dev/null || true; printf '\\nBLUEZ='; systemctl is-active bluetooth 2>/dev/null || true; printf '\\nCONTROLLER='; bluetoothctl list 2>/dev/null || true; printf '\\nUSB='; lsusb 2>/dev/null || true; printf '\\nNXBT='; /opt/squidsketch/venv/bin/python -c \"import nxbt; print(getattr(nxbt, '__version__', 'installed'))\" 2>&1"],
-      { timeout: 30_000 });
-      const fields = Object.fromEntries([...linux.stdout.matchAll(/(?:^|\n)([A-Z]+)=([^\n]*)/g)].map((match) => [match[1], match[2].trim()]));
+      const base = ['-d', DISTRO, '-u', 'root', '--'];
+      const attached = Boolean(status.bluetooth.attachedBusId);
+      const skipped = { ok: true, stdout: '', stderr: '' };
+      const [kernel, bluez, nxbt, controller, usb] = await Promise.all([
+        capture('wsl.exe', [...base, 'uname', '-r'], { timeout: 10_000 }),
+        capture('wsl.exe', [...base, 'systemctl', 'is-active', 'bluetooth.service'], { timeout: 10_000 }),
+        capture('wsl.exe', [...base, '/opt/squidsketch/venv/bin/python', '-c', "import nxbt; print(getattr(nxbt, '__version__', 'installed'))"], { timeout: 10_000 }),
+        attached ? capture('wsl.exe', [...base, 'bluetoothctl', 'list'], { timeout: 10_000 }) : skipped,
+        attached ? capture('wsl.exe', [...base, 'lsusb'], { timeout: 10_000 }) : skipped
+      ]);
       checks.push(
-        { id: 'kernel', label: 'WSL 内核', ok: linux.ok && Boolean(fields.KERNEL), detail: fields.KERNEL || linux.stderr || '无法读取' },
-        { id: 'bluez', label: 'BlueZ 服务', ok: fields.BLUEZ === 'active', detail: fields.BLUEZ || '未运行' },
-        { id: 'nxbt', label: 'NXBT', ok: Boolean(fields.NXBT) && !/traceback|error|no such/i.test(fields.NXBT), detail: fields.NXBT || '导入失败' },
-        { id: 'controller', label: 'Linux 蓝牙控制器', ok: Boolean(fields.CONTROLLER), pending: !status.bluetooth.attachedBusId, detail: fields.CONTROLLER || (status.bluetooth.attachedBusId ? '已接管 USB，但 BlueZ 未发现控制器' : '接管蓝牙后可完成此项检查') },
-        { id: 'lsusb', label: 'WSL USB 设备', ok: !status.bluetooth.attachedBusId || Boolean(fields.USB), detail: fields.USB || '当前没有已接管的 USB 设备' }
+        { id: 'kernel', label: 'WSL 内核', ok: kernel.ok && Boolean(kernel.stdout), detail: kernel.stdout || kernel.stderr || '无法读取' },
+        { id: 'bluez', label: 'BlueZ 服务', ok: bluez.stdout === 'active', pending: !attached, detail: bluez.stdout || bluez.stderr || (attached ? '未运行' : '接管蓝牙后可完成此项检查') },
+        { id: 'nxbt', label: 'NXBT', ok: nxbt.ok && Boolean(nxbt.stdout) && !/traceback|error|no such/i.test(nxbt.stdout), detail: nxbt.stdout || nxbt.stderr || '导入失败' },
+        { id: 'controller', label: 'Linux 蓝牙控制器', ok: controller.ok && Boolean(controller.stdout), pending: !attached, detail: controller.stdout || controller.stderr || (attached ? '已接管 USB，但 BlueZ 未发现控制器' : '接管蓝牙后可完成此项检查') },
+        { id: 'lsusb', label: 'WSL USB 设备', ok: !attached || (usb.ok && Boolean(usb.stdout)), detail: usb.stdout || usb.stderr || '当前没有已接管的 USB 设备' }
       );
     }
 
@@ -342,4 +387,4 @@ class SystemManager {
   }
 }
 
-module.exports = { SystemManager, DISTRO, capture, decodeOutput, parseUsbipdList, parseUsbipdState, vidPidFromInstanceId };
+module.exports = { SystemManager, DISTRO, capture, decodeOutput, isWslUnavailable, parseUsbipdList, parseUsbipdState, vidPidFromInstanceId };
