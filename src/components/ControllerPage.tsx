@@ -26,7 +26,7 @@ import {
   ControllerPlaybackSettings
 } from '../lib/controller-macro';
 import { useI18n } from '../lib/i18n';
-import { isControllerUiTarget } from '../lib/controller-input-target';
+import { isControllerKeyboardUiTarget, isControllerUiTarget } from '../lib/controller-input-target';
 
 type Props = {
   connection: 'offline' | 'connecting' | 'pairing' | 'connected' | 'error';
@@ -400,7 +400,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
     };
     const keydown = (event: KeyboardEvent) => {
       if (!connected || inputLocked || mappingOpen || capturing) return;
-      if (isControllerUiTarget(event.target)) return;
+      if (isControllerKeyboardUiTarget(event.target)) return;
       const actionId = resolveBinding(bindings, 'keyboard', event.code);
       if (!actionId) return;
       event.preventDefault(); pressInput(`keyboard:${event.code}`, actionId);
