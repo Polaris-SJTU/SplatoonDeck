@@ -191,16 +191,27 @@ const KEY_LABELS: Record<string, string> = {
   ControlLeft: '左 Ctrl', ControlRight: '右 Ctrl', AltLeft: '左 Alt', AltRight: '右 Alt'
 };
 
-export function formatKeyboardCode(code: string | null) {
-  if (!code) return '未设置';
+export function formatKeyboardCode(code: string | null, locale: 'zh-CN' | 'en-US' | 'ja-JP' = 'zh-CN') {
+  if (!code) return locale === 'en-US' ? 'Not set' : locale === 'ja-JP' ? '未設定' : '未设置';
+  const localizedModifiers: Record<string, [string, string]> = {
+    ShiftLeft: ['Left Shift', '左 Shift'], ShiftRight: ['Right Shift', '右 Shift'],
+    ControlLeft: ['Left Ctrl', '左 Ctrl'], ControlRight: ['Right Ctrl', '右 Ctrl'],
+    AltLeft: ['Left Alt', '左 Alt'], AltRight: ['Right Alt', '右 Alt']
+  };
+  if (locale !== 'zh-CN' && localizedModifiers[code]) return localizedModifiers[code][locale === 'en-US' ? 0 : 1];
   if (KEY_LABELS[code]) return KEY_LABELS[code];
   if (/^Key[A-Z]$/.test(code)) return code.slice(3);
   if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  if (/^Numpad[0-9]$/.test(code)) return `小键盘 ${code.slice(6)}`;
+  if (/^Numpad[0-9]$/.test(code)) return `${locale === 'en-US' ? 'Numpad' : locale === 'ja-JP' ? 'テンキー' : '小键盘'} ${code.slice(6)}`;
   return code.replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 
-export function formatMouseButton(button: number | null) {
-  if (button === null) return '未设置';
-  return ['鼠标左键', '鼠标中键', '鼠标右键', '鼠标后退键', '鼠标前进键'][button] ?? `鼠标键 ${button}`;
+export function formatMouseButton(button: number | null, locale: 'zh-CN' | 'en-US' | 'ja-JP' = 'zh-CN') {
+  if (button === null) return locale === 'en-US' ? 'Not set' : locale === 'ja-JP' ? '未設定' : '未设置';
+  const labels = locale === 'en-US'
+    ? ['Left Mouse', 'Middle Mouse', 'Right Mouse', 'Mouse Back', 'Mouse Forward']
+    : locale === 'ja-JP'
+      ? ['マウス左ボタン', 'マウス中央ボタン', 'マウス右ボタン', 'マウス戻る', 'マウス進む']
+      : ['鼠标左键', '鼠标中键', '鼠标右键', '鼠标后退键', '鼠标前进键'];
+  return labels[button] ?? `${locale === 'en-US' ? 'Mouse Button' : locale === 'ja-JP' ? 'マウスボタン' : '鼠标键'} ${button}`;
 }

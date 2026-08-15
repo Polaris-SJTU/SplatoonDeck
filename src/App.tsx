@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import SetupPage from './components/SetupPage';
 import ControllerPage from './components/ControllerPage';
 import StudioPage from './components/StudioPage';
+import { LOCALE_OPTIONS, useI18n } from './lib/i18n';
 
 type Page = 'setup' | 'controller' | 'studio';
 type ConnectionState = 'offline' | 'connecting' | 'pairing' | 'connected' | 'error';
@@ -13,6 +14,7 @@ const navItems: Array<{ id: Page; label: string; hint: string; icon: string }> =
 ];
 
 export default function App() {
+  const { locale, setLocale, t, tx } = useI18n();
   const [page, setPage] = useState<Page>('setup');
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [connection, setConnection] = useState<ConnectionState>('offline');
@@ -27,15 +29,15 @@ export default function App() {
     try {
       setSystemStatus(await window.squidSketch.system.getStatus());
     } catch (error) {
-      setToast(error instanceof Error ? error.message : String(error));
+      setToast(tx(error instanceof Error ? error.message : String(error)));
     }
-  }, []);
+  }, [tx]);
 
   useEffect(() => {
     refreshStatus();
     window.squidSketch.app.version().then(setVersion).catch(() => undefined);
     const offSystem = window.squidSketch.system.onProgress((event) => {
-      if (typeof event.message === 'string') setToast(event.message);
+      if (typeof event.message === 'string') setToast(tx(event.message));
       if (event.phase === 'released' || event.phase === 'attached' || event.phase === 'completed') refreshStatus();
     });
     const offController = window.squidSketch.controller.onEvent((event) => {
@@ -46,14 +48,14 @@ export default function App() {
       if (event.type === 'pairing') setConnection('pairing');
       if (event.type === 'connected') setConnection('connected');
       if (event.type === 'disconnected') { setConnection('offline'); setControllerMessage('虚拟手柄已断开 · 蓝牙仍由 WSL 接管'); setMacroProgress(null); refreshStatus(); }
-      if (event.type === 'error') { setConnection('error'); setControllerMessage('连接失败'); setToast(event.message || '控制器发生错误'); }
+      if (event.type === 'error') { setConnection('error'); setControllerMessage('连接失败'); setToast(tx(event.message || '控制器发生错误')); }
       if (event.type === 'macro_started') setMacroProgress(0);
       if (event.type === 'macro_progress') { setMacroProgress(event.progress ?? 0); setMacroElapsedMs(event.elapsedMs ?? 0); }
-      if (event.type === 'macro_completed') { setMacroProgress(1); setToast('涂鸦绘制完成！'); }
-      if (event.type === 'macro_stopped') { setMacroProgress(null); setToast('绘制已停止，可以调整起始行后继续'); }
+      if (event.type === 'macro_completed') { setMacroProgress(1); setToast(t('涂鸦绘制完成！')); }
+      if (event.type === 'macro_stopped') { setMacroProgress(null); setToast(t('绘制已停止，可以调整起始行后继续')); }
     });
     return () => { offSystem(); offController(); };
-  }, [refreshStatus]);
+  }, [refreshStatus, t, tx]);
 
   useEffect(() => {
     if (!toast) return;
@@ -72,14 +74,14 @@ export default function App() {
       let latest = systemStatus;
       if (!latest?.bluetooth.attachedBusId) {
         const adapter = latest?.bluetooth.candidates[0];
-        if (!adapter) throw new Error('没有检测到可接管的内置 USB 蓝牙适配器');
+        if (!adapter) throw new Error(t('没有检测到可接管的内置 USB 蓝牙适配器'));
         latest = await window.squidSketch.system.attachBluetooth(adapter.busId);
         setSystemStatus(latest);
       }
       await window.squidSketch.controller.connect({ reconnect: true });
     } catch (error) {
       setConnection('error');
-      setToast(error instanceof Error ? error.message : String(error));
+      setToast(tx(error instanceof Error ? error.message : String(error)));
     }
   };
 
@@ -106,14 +108,17 @@ export default function App() {
           {navItems.map((item) => (
             <button key={item.id} className={page === item.id ? 'nav-item active' : 'nav-item'} onClick={() => setPage(item.id)}>
               <span className="nav-number">{item.icon}</span>
-              <span><strong>{item.label}</strong><small>{item.hint}</small></span>
+              <span><strong>{t(item.label)}</strong><small>{t(item.hint)}</small></span>
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className={`connection-pill ${connection}`}><i />{connection === 'connected' ? 'SWITCH 2 已连接' : controllerMessage}</div>
+          <div className="language-switcher" role="group" aria-label={t('界面语言')}>
+            {LOCALE_OPTIONS.map((option) => <button key={option.value} className={locale === option.value ? 'active' : ''} aria-pressed={locale === option.value} title={option.label} onClick={() => setLocale(option.value)}>{option.short}</button>)}
+          </div>
+          <div className={`connection-pill ${connection}`}><i />{connection === 'connected' ? t('SWITCH 2 已连接') : tx(controllerMessage)}</div>
           <div className="mini-meter"><span style={{ width: `${readyCount / 3 * 100}%` }} /></div>
-          <small>环境就绪度 {readyCount}/3 · v{version}</small>
+          <small>{t('环境就绪度 {{count}}/3 · v{{version}}', { count: readyCount, version })}</small>
         </div>
       </aside>
 

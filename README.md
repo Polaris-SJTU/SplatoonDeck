@@ -5,6 +5,10 @@
 <h1 align="center">SplatoonDeck</h1>
 
 <p align="center">
+  简体中文 · <a href="./README_EN.md">English</a> · <a href="./README_JA.md">日本語</a>
+</p>
+
+<p align="center">
   <strong>用键盘鼠标控制 Switch 2，把喜欢的图片自动画进 Splatoon 3。</strong>
 </p>
 
@@ -35,7 +39,7 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请�
 
 ### 第一次连接 Switch 2
 
-1. 运行 SplatoonDeck，进入“准备舱”。
+1. 运行 SplatoonDeck，进入“准备舱”。界面左下角可以随时切换简体中文、English 和日本語，选择会自动保存。
 2. 点击“检查 / 修复依赖”，按照提示完成 WSL 2、专用环境和蓝牙组件的准备。如果系统提示重启，请重启后继续。
 3. 运行兼容性诊断，确认 WSL、USB/IP、BlueZ、NXBT 和蓝牙控制器均已就绪。
 4. 选择检测到的蓝牙控制器，点击“临时接管蓝牙”。
@@ -115,6 +119,7 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请�
 - 在应用内安装、检查、修复和清理所需组件。
 - 蓝牙可以临时交给 SplatoonDeck 使用，也可以随时归还 Windows。
 - 内置兼容性诊断，遇到问题时可以快速找到未准备好的项目。
+- 应用界面支持简体中文、English 和日本語，并会记住上次选择。
 - 独立保存运行环境，不会修改已有的 Linux 发行版。
 
 ## 图片效果

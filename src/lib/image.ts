@@ -476,9 +476,11 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   };
 }
 
-export function formatDuration(milliseconds: number) {
+export function formatDuration(milliseconds: number, locale: 'zh-CN' | 'en-US' | 'ja-JP' = 'zh-CN') {
   const seconds = Math.ceil(milliseconds / 1000);
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
+  if (locale === 'en-US') return minutes ? `${minutes}m ${rest}s` : `${rest}s`;
+  if (locale === 'ja-JP') return minutes ? `${minutes}分${rest}秒` : `${rest}秒`;
   return minutes ? `${minutes} 分 ${rest} 秒` : `${rest} 秒`;
 }

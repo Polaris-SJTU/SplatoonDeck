@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from 'vitest';
-import { createCalibrationPixels, ditherLuminance, estimateScanCost, generateMacro, getDrawPath, pixelChecksum, resolveScanDirection, transformLuminance } from './image';
+import { createCalibrationPixels, ditherLuminance, estimateScanCost, formatDuration, generateMacro, getDrawPath, pixelChecksum, resolveScanDirection, transformLuminance } from './image';
 
 function simulateDrawing(macro: string, width: number, height: number, _startBand: number, direction: 'row' | 'column' = 'row') {
   // Parse LOOP blocks and then replay NXBT's actual state semantics. A line
@@ -186,13 +186,19 @@ describe('image pipeline', () => {
     expect(pixelChecksum(new Uint8Array([1, 0, 0, 0]), 2, 2)).not.toBe(pixelChecksum(pixels, 2, 2));
   });
 
-  it('creates the bounded 8 脳 7 hardware calibration pattern', () => {
+  it('creates the bounded 8 × 7 hardware calibration pattern', () => {
     const pixels = createCalibrationPixels(12, 10);
     expect(pixels).toHaveLength(120);
     expect([...pixels].reduce((sum, value) => sum + value, 0)).toBe(36);
     expect(pixels[0]).toBe(1);
     expect(pixels[6 * 12 + 7]).toBe(1);
     expect(pixels[7 * 12]).toBe(0);
+  });
+
+  it('formats drawing durations for all supported interface languages', () => {
+    expect(formatDuration(65_000, 'zh-CN')).toBe('1 分 5 秒');
+    expect(formatDuration(65_000, 'en-US')).toBe('1m 5s');
+    expect(formatDuration(65_000, 'ja-JP')).toBe('1分5秒');
   });
 
   it('generates a verified column-scan macro that skips empty columns', () => {

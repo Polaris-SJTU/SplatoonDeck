@@ -4,6 +4,7 @@ import {
   blendMouseDeltaToStick,
   createDefaultBindings,
   formatKeyboardCode,
+  formatMouseButton,
   loadBindings,
   loadMouseMotionSettings,
   mouseDeltaToStick,
@@ -46,6 +47,13 @@ describe('controller input mappings', () => {
     expect(bindings.A).toEqual({ keyboard: 'Space', mouse: 4 });
     expect(bindings.B.mouse).toBeNull();
     expect(formatKeyboardCode(bindings.A.keyboard)).toBe('Space');
+  });
+
+  it('formats keyboard and mouse bindings for each interface language', () => {
+    expect(formatKeyboardCode('ShiftLeft', 'en-US')).toBe('Left Shift');
+    expect(formatKeyboardCode('Numpad4', 'ja-JP')).toBe('テンキー 4');
+    expect(formatMouseButton(0, 'en-US')).toBe('Left Mouse');
+    expect(formatMouseButton(2, 'ja-JP')).toBe('マウス右ボタン');
   });
 
   it('clamps mouse sensitivity and converts relative movement to stick values', () => {

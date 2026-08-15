@@ -16,6 +16,7 @@ import {
   MouseMotionSettings,
   resolveBinding
 } from '../lib/controller-mapping';
+import { useI18n } from '../lib/i18n';
 
 type Props = {
   connection: 'offline' | 'connecting' | 'pairing' | 'connected' | 'error';
@@ -107,6 +108,7 @@ function loadInitialMouseMotion() {
 }
 
 export default function ControllerPage({ connection, message, inputLocked, onConnect, onDisconnect }: Props) {
+  const { locale, t, tx } = useI18n();
   const connected = connection === 'connected';
   const connectionBusy = connection === 'connecting' || connection === 'pairing';
   const stageRef = useRef<HTMLDivElement>(null);
@@ -344,24 +346,24 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
   };
   const bindingHint = (actionId: ControllerActionId) => {
     const binding = bindings[actionId];
-    return binding.keyboard ? formatKeyboardCode(binding.keyboard) : formatMouseButton(binding.mouse);
+    return binding.keyboard ? formatKeyboardCode(binding.keyboard, locale) : formatMouseButton(binding.mouse, locale);
   };
 
   return (
     <section className="page controller-page">
       <header className="page-header compact">
-        <div><span className="eyebrow">TAKE CONTROL</span><h1>虚拟 <span>Pro Controller</span></h1><p>鼠标、触控和键盘都能操作；双击摇杆可按下 L3 / R3。</p></div>
+        <div><span className="eyebrow">TAKE CONTROL</span><h1>{t('虚拟 ')}<span>Pro Controller</span></h1><p>{t('鼠标、触控和键盘都能操作；双击摇杆可按下 L3 / R3。')}</p></div>
         <div className="controller-header-actions">
-          <button disabled={inputLocked} className="ghost-button mapping-open-button" onClick={openMapping}>⌨ 自定义映射</button>
-          {mouseMotion.target !== 'off' && <button className={`ghost-button mouse-control-button ${mouseLocked ? 'active' : ''}`} onClick={toggleMouseControl} disabled={!connected || inputLocked}>{mouseLocked ? '鼠标控制中 · Esc 退出' : `启用鼠标 → ${mouseMotion.target === 'L_STICK' ? '左摇杆' : '右摇杆'}`}</button>}
-          {mouseMotion.target !== 'off' && <div className="mouse-sensitivity-quick"><span>横向</span><input aria-label="鼠标横向灵敏度" disabled={inputLocked} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityX} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityX: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityX.toFixed(1)}</b><span>纵向</span><input aria-label="鼠标纵向灵敏度" disabled={inputLocked} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityY} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityY: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityY.toFixed(1)}</b></div>}
+          <button disabled={inputLocked} className="ghost-button mapping-open-button" onClick={openMapping}>⌨ {t('自定义映射')}</button>
+          {mouseMotion.target !== 'off' && <button className={`ghost-button mouse-control-button ${mouseLocked ? 'active' : ''}`} onClick={toggleMouseControl} disabled={!connected || inputLocked}>{mouseLocked ? t('鼠标控制中 · Esc 退出') : t('启用鼠标 → {{stick}}', { stick: t(mouseMotion.target === 'L_STICK' ? '左摇杆' : '右摇杆') })}</button>}
+          {mouseMotion.target !== 'off' && <div className="mouse-sensitivity-quick"><span>{t('横向')}</span><input aria-label={t('鼠标横向灵敏度')} disabled={inputLocked} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityX} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityX: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityX.toFixed(1)}</b><span>{t('纵向')}</span><input aria-label={t('鼠标纵向灵敏度')} disabled={inputLocked} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityY} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityY: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityY.toFixed(1)}</b></div>}
           <button
             className={`connect-button ${connected ? 'ghost-button danger' : 'primary-button lime'}`}
             onClick={connected ? onDisconnect : onConnect}
             disabled={inputLocked || connectionBusy}
           >
             {!connected && (connectionBusy ? <i className="spinner" /> : 'ᛒ')}{' '}
-            {connected ? '断开连接' : connection === 'pairing' ? '等待 Switch 2 配对' : connection === 'connecting' ? '正在连接 Switch 2' : '连接 Switch 2'}
+            {t(connected ? '断开连接' : connection === 'pairing' ? '等待 Switch 2 配对' : connection === 'connecting' ? '正在连接 Switch 2' : '连接 Switch 2')}
           </button>
         </div>
       </header>
@@ -402,54 +404,54 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
             </div>
           </div>
         </div>
-        {mouseLocked && <div className="mouse-lock-hud"><strong>鼠标正在控制{mouseMotion.target === 'L_STICK' ? '左' : '右'}摇杆</strong><span>X {Math.round(mouseVector.x)} · Y {Math.round(mouseVector.y)} · Esc 退出</span></div>}
-        {inputLocked && <div className="controller-lock-notice"><strong>自动绘制进行中</strong><span>手柄输入已锁定，请在涂鸦工坊停止绘制后操作</span></div>}
-        <div className={`controller-state-card ${connection}`}><i /><div><strong>{connected ? 'LIVE INPUT' : connection === 'pairing' ? 'PAIRING' : 'STANDBY'}</strong><span>{message}</span></div></div>
+        {mouseLocked && <div className="mouse-lock-hud"><strong>{t('鼠标正在控制{{stick}}', { stick: t(mouseMotion.target === 'L_STICK' ? '左摇杆' : '右摇杆') })}</strong><span>X {Math.round(mouseVector.x)} · Y {Math.round(mouseVector.y)} · {t('Esc 退出')}</span></div>}
+        {inputLocked && <div className="controller-lock-notice"><strong>{t('自动绘制进行中')}</strong><span>{t('手柄输入已锁定，请在涂鸦工坊停止绘制后操作')}</span></div>}
+        <div className={`controller-state-card ${connection}`}><i /><div><strong>{connected ? 'LIVE INPUT' : connection === 'pairing' ? 'PAIRING' : 'STANDBY'}</strong><span>{tx(message)}</span></div></div>
       </div></ControllerInputLock.Provider>
 
       <div className="key-guide">
-        <span><kbd>1 2 3 4</kbd> 十字键</span>
-        <span><kbd>W A S D</kbd> 左摇杆</span>
+        <span><kbd>1 2 3 4</kbd> {t('十字键')}</span>
+        <span><kbd>W A S D</kbd> {t('左摇杆')}</span>
         <span><kbd>{bindingHint('B')} / {bindingHint('A')}</kbd> B / A</span>
         <span><kbd>{bindingHint('Y')} / {bindingHint('X')}</kbd> Y / X</span>
         <span><kbd>{bindingHint('L')} / {bindingHint('ZL')}</kbd> L / ZL</span>
         <span><kbd>{bindingHint('R')} / {bindingHint('ZR')}</kbd> R / ZR</span>
-        <span><kbd>鼠标移动</kbd> 右摇杆</span>
-        <button disabled={inputLocked} className="key-guide-edit" onClick={openMapping}>编辑全部映射 →</button>
+        <span><kbd>{t('鼠标移动')}</kbd> {t('右摇杆')}</span>
+        <button disabled={inputLocked} className="key-guide-edit" onClick={openMapping}>{t('编辑全部映射 →')}</button>
       </div>
 
       {mappingOpen && createPortal(<div className="mapping-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) closeMapping(); }}>
         <div className="mapping-dialog" role="dialog" aria-modal="true" aria-labelledby="mapping-title">
           <header className="mapping-header">
-            <div><span className="eyebrow">INPUT LAB</span><h2 id="mapping-title">键盘与鼠标映射</h2><p>点击一个映射槽，再按下想使用的键。重复绑定会自动从旧动作移除。</p></div>
-            <div className="mapping-header-actions"><button className="ghost-button" onClick={restoreDefaults}>恢复默认</button><button className="mapping-close" onClick={closeMapping} aria-label="关闭映射设置">×</button></div>
+            <div><span className="eyebrow">INPUT LAB</span><h2 id="mapping-title">{t('键盘与鼠标映射')}</h2><p>{t('点击一个映射槽，再按下想使用的键。重复绑定会自动从旧动作移除。')}</p></div>
+            <div className="mapping-header-actions"><button className="ghost-button" onClick={restoreDefaults}>{t('恢复默认')}</button><button className="mapping-close" onClick={closeMapping} aria-label={t('关闭映射设置')}>×</button></div>
           </header>
 
           <section className="mouse-motion-settings">
-            <div className="motion-copy"><strong>鼠标移动</strong><span>启用后，在手柄页点击“启用鼠标”，使用指针锁定连续控制摇杆。</span></div>
-            <label><span>控制目标</span><select value={mouseMotion.target} onChange={(event) => setMouseMotion((current) => ({ ...current, target: event.target.value as MouseMotionSettings['target'] }))}><option value="off">关闭</option><option value="L_STICK">左摇杆</option><option value="R_STICK">右摇杆</option></select></label>
-            <div className="axis-sensitivity"><label className="sensitivity-control"><span>横向灵敏度 <b>{mouseMotion.sensitivityX.toFixed(1)}</b></span><input aria-label="映射设置鼠标横向灵敏度" type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityX} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityX: Number(event.target.value) }))} /></label><label className="sensitivity-control"><span>纵向灵敏度 <b>{mouseMotion.sensitivityY.toFixed(1)}</b></span><input aria-label="映射设置鼠标纵向灵敏度" type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityY} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityY: Number(event.target.value) }))} /></label></div>
-            <label className="motion-check"><input type="checkbox" checked={mouseMotion.invertX} onChange={(event) => setMouseMotion((current) => ({ ...current, invertX: event.target.checked }))} /><span>反转 X</span></label>
-            <label className="motion-check"><input type="checkbox" checked={mouseMotion.invertY} onChange={(event) => setMouseMotion((current) => ({ ...current, invertY: event.target.checked }))} /><span>反转 Y</span></label>
+            <div className="motion-copy"><strong>{t('鼠标移动')}</strong><span>{t('启用后，在手柄页点击“启用鼠标”，使用指针锁定连续控制摇杆。')}</span></div>
+            <label><span>{t('控制目标')}</span><select value={mouseMotion.target} onChange={(event) => setMouseMotion((current) => ({ ...current, target: event.target.value as MouseMotionSettings['target'] }))}><option value="off">{t('关闭')}</option><option value="L_STICK">{t('左摇杆')}</option><option value="R_STICK">{t('右摇杆')}</option></select></label>
+            <div className="axis-sensitivity"><label className="sensitivity-control"><span>{t('横向灵敏度')} <b>{mouseMotion.sensitivityX.toFixed(1)}</b></span><input aria-label={t('鼠标横向灵敏度')} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityX} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityX: Number(event.target.value) }))} /></label><label className="sensitivity-control"><span>{t('纵向灵敏度')} <b>{mouseMotion.sensitivityY.toFixed(1)}</b></span><input aria-label={t('鼠标纵向灵敏度')} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityY} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityY: Number(event.target.value) }))} /></label></div>
+            <label className="motion-check"><input type="checkbox" checked={mouseMotion.invertX} onChange={(event) => setMouseMotion((current) => ({ ...current, invertX: event.target.checked }))} /><span>{t('反转 X')}</span></label>
+            <label className="motion-check"><input type="checkbox" checked={mouseMotion.invertY} onChange={(event) => setMouseMotion((current) => ({ ...current, invertY: event.target.checked }))} /><span>{t('反转 Y')}</span></label>
           </section>
 
-          <div className="mapping-columns"><span>手柄动作</span><span>键盘</span><span>鼠标按键</span></div>
+          <div className="mapping-columns"><span>{t('手柄动作')}</span><span>{t('键盘')}</span><span>{t('鼠标按键')}</span></div>
           <div className="mapping-groups">
             {groupedActions.map(({ group, actions }) => <section className="mapping-group" key={group}>
-              <h3>{group}</h3>
+              <h3>{t(group)}</h3>
               {actions.map((action) => {
                 const binding = bindings[action.id];
                 const keyboardCapturing = capturing?.actionId === action.id && capturing.device === 'keyboard';
                 const mouseCapturing = capturing?.actionId === action.id && capturing.device === 'mouse';
                 return <div className="mapping-row" key={action.id}>
-                  <strong>{action.label}</strong>
-                  <div className="binding-cell"><button aria-label={`${action.label} 键盘映射`} className={`binding-slot ${keyboardCapturing ? 'capturing' : ''} ${binding.keyboard ? '' : 'empty'}`} onClick={() => setCapturing({ actionId: action.id, device: 'keyboard' })}>{keyboardCapturing ? '请按键…' : formatKeyboardCode(binding.keyboard)}</button>{binding.keyboard && <button className="binding-clear" aria-label={`清除 ${action.label} 的键盘映射`} onClick={() => changeBinding(action.id, 'keyboard', null)}>×</button>}</div>
-                  <div className="binding-cell"><button aria-label={`${action.label} 鼠标映射`} className={`binding-slot ${mouseCapturing ? 'capturing' : ''} ${binding.mouse === null ? 'empty' : ''}`} onClick={() => setCapturing({ actionId: action.id, device: 'mouse' })}>{mouseCapturing ? '请按鼠标键…' : formatMouseButton(binding.mouse)}</button>{binding.mouse !== null && <button className="binding-clear" aria-label={`清除 ${action.label} 的鼠标映射`} onClick={() => changeBinding(action.id, 'mouse', null)}>×</button>}</div>
+                  <strong>{t(action.label)}</strong>
+                  <div className="binding-cell"><button aria-label={`${t(action.label)} · ${t('键盘')}`} className={`binding-slot ${keyboardCapturing ? 'capturing' : ''} ${binding.keyboard ? '' : 'empty'}`} onClick={() => setCapturing({ actionId: action.id, device: 'keyboard' })}>{keyboardCapturing ? t('请按键…') : formatKeyboardCode(binding.keyboard, locale)}</button>{binding.keyboard && <button className="binding-clear" aria-label={`× ${t(action.label)} · ${t('键盘')}`} onClick={() => changeBinding(action.id, 'keyboard', null)}>×</button>}</div>
+                  <div className="binding-cell"><button aria-label={`${t(action.label)} · ${t('鼠标按键')}`} className={`binding-slot ${mouseCapturing ? 'capturing' : ''} ${binding.mouse === null ? 'empty' : ''}`} onClick={() => setCapturing({ actionId: action.id, device: 'mouse' })}>{mouseCapturing ? t('请按鼠标键…') : formatMouseButton(binding.mouse, locale)}</button>{binding.mouse !== null && <button className="binding-clear" aria-label={`× ${t(action.label)} · ${t('鼠标按键')}`} onClick={() => changeBinding(action.id, 'mouse', null)}>×</button>}</div>
                 </div>;
               })}
             </section>)}
           </div>
-          <footer className="mapping-footer"><span>鼠标按键映射在页面空白区域生效，避免与直接点击虚拟手柄冲突。</span><div><button className="ghost-button" onClick={() => { setBindings(emptyBindings()); setCapturing(null); }}>清空按键映射</button><button className="primary-button lime" onClick={closeMapping}>完成</button></div></footer>
+          <footer className="mapping-footer"><span>{t('鼠标按键映射在页面空白区域生效，避免与直接点击虚拟手柄冲突。')}</span><div><button className="ghost-button" onClick={() => { setBindings(emptyBindings()); setCapturing(null); }}>{t('清空按键映射')}</button><button className="primary-button lime" onClick={closeMapping}>{t('完成')}</button></div></footer>
         </div>
       </div>, document.body)}
     </section>
