@@ -661,24 +661,20 @@ namespace SplatoonDeck.Setup
             else Detail("usbipd-win is already available.");
 
             Step("4/6", "Enabling required Windows features");
-            if (!wslFeatureBefore)
+            if (!wslFeatureBefore || !vmFeatureBefore)
             {
-                state.Values["enabledWslFeatureByApp"] = true;
+                if (!wslFeatureBefore) state.Values["enabledWslFeatureByApp"] = true;
+                if (!vmFeatureBefore) state.Values["enabledVmFeatureByApp"] = true;
                 state.Values["phase"] = "windows-features";
                 state.Save();
-                EnableFeature("Microsoft-Windows-Subsystem-Linux");
+                Detail("Running the current WSL installer to enable the required Windows features (no default distribution will be added).");
+                var install = commands.Run("wsl.exe", "--install --no-distribution", false, 30 * 60 * 1000);
+                if (install.ExitCode != 0 && install.ExitCode != 3010)
+                    throw new InvalidOperationException("wsl --install could not enable the required Windows features (exit code " + install.ExitCode + ").\n" + install.Output);
                 restartRequired = true;
-            }
-            else Detail("Windows Subsystem for Linux already existed and will be preserved.");
-            if (!vmFeatureBefore)
-            {
-                state.Values["enabledVmFeatureByApp"] = true;
-                state.Values["phase"] = "windows-features";
                 state.Save();
-                EnableFeature("VirtualMachinePlatform");
-                restartRequired = true;
             }
-            else Detail("Virtual Machine Platform already existed and will be preserved.");
+            else Detail("The required Windows features (WSL and Virtual Machine Platform) are already enabled.");
             state.Values["restartRequired"] = restartRequired;
             state.Values["restartReason"] = restartRequired ? "install" : null;
             state.Values["phase"] = restartRequired ? "restart-pending" : "wsl-verification";
@@ -872,17 +868,6 @@ namespace SplatoonDeck.Setup
                 foreach (ManagementObject item in results) return Convert.ToInt32(item["InstallState"]) == 1;
             }
             return false;
-        }
-
-        private void EnableFeature(string name)
-        {
-            var dism = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "dism.exe");
-            var arguments = "/Online /Enable-Feature /FeatureName:" + name + " /All /NoRestart";
-            Detail("Trying the local Windows component store first: " + name + ".");
-            var local = commands.Run(dism, arguments + " /LimitAccess", true, 5 * 60 * 1000);
-            if (local.ExitCode == 0 || local.ExitCode == 3010) return;
-            Detail("The local payload is unavailable. Windows Update will download the required component; the percentage may pause while Windows retries.");
-            commands.Run(dism, arguments, false, 30 * 60 * 1000);
         }
 
         private bool DisableFeature(string name)
