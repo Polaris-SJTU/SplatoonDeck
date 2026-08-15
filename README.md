@@ -33,7 +33,7 @@ SplatoonDeck 是一款面向 Splatoon 3 玩家的 Windows 工具。它可以把�
 - 电脑内置或已有的、可被应用识别的 USB 蓝牙控制器。
 - 首次准备环境时需要网络连接和管理员权限。
 
-下载当前版本：[`SplatoonDeck-0.2.1-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.1/SplatoonDeck-0.2.1-portable.exe)
+下载当前版本：[`SplatoonDeck-0.2.2-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.2/SplatoonDeck-0.2.2-portable.exe)
 
 SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 获取。
 
@@ -75,19 +75,19 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请�
 
 一站式检查运行环境、接管蓝牙，并在需要时将蓝牙归还 Windows。
 
-![SplatoonDeck 准备舱](./docs/screenshots/setup.png)
+![SplatoonDeck 准备舱](./docs/screenshots/localized/zh/setup.png)
 
 ### 虚拟手柄
 
 通过拟真的 Pro Controller 界面操作 Switch 2，也可以使用自定义键盘与鼠标映射。
 
-![SplatoonDeck 虚拟手柄](./docs/screenshots/controller.png)
+![SplatoonDeck 虚拟手柄](./docs/screenshots/localized/zh/controller.png)
 
 ### 涂鸦工坊
 
 导入图片、调整黑白像素效果，预览 `320 × 120` 游戏画布并启动自动绘制。
 
-![SplatoonDeck 涂鸦工坊](./docs/screenshots/studio.png)
+![SplatoonDeck 涂鸦工坊](./docs/screenshots/localized/zh/studio.png)
 
 ## 主要功能
 

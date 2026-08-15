@@ -1,6 +1,6 @@
 {
   "name": "splatoon-deck",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Use keyboard and mouse with Switch 2, and draw imported images in Splatoon 3",
   "main": "electron/main.cjs",

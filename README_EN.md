@@ -33,41 +33,41 @@ No ESP32, Raspberry Pi, or dedicated controller adapter is required. SplatoonDec
 - A built-in or existing USB Bluetooth controller that SplatoonDeck can detect.
 - An internet connection and administrator permission for the first-time setup.
 
-Download the current version: [`SplatoonDeck-0.2.1-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.1/SplatoonDeck-0.2.1-portable.exe)
+Download the current version: [`SplatoonDeck-0.2.2-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.2/SplatoonDeck-0.2.2-portable.exe)
 
 SplatoonDeck is a single-file portable app and does not need a traditional installation. For later versions, visit [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest).
 
 ### Connect to Switch 2 for the first time
 
-1. Run SplatoonDeck and open **Setup Bay（准备舱）**. Use the language selector at the bottom-left to switch between Simplified Chinese, English, and Japanese; your choice is saved automatically.
-2. Select **Check / Repair Dependencies（检查 / 修复依赖）** and follow the prompts to prepare WSL 2, the dedicated environment, and Bluetooth components. Restart Windows if requested, then reopen the app.
+1. Run SplatoonDeck and open **Setup Bay**. Use the language selector at the bottom-left to switch between Simplified Chinese, English, and Japanese; your choice is saved automatically.
+2. Select **Check / Repair Dependencies** and follow the prompts to prepare WSL 2, the dedicated environment, and Bluetooth components. Restart Windows if requested, then reopen the app.
 3. Run the compatibility diagnostics and confirm that WSL, USB/IP, BlueZ, NXBT, and the Bluetooth controller are ready.
-4. Select the detected Bluetooth controller and choose **Temporarily Take Over Bluetooth（临时接管蓝牙）**.
+4. Select the detected Bluetooth controller and choose **Temporarily Attach Bluetooth**.
 5. On Switch 2, open **Controllers → Change Grip/Order**.
-6. Open **Virtual Controller（虚拟手柄）** in SplatoonDeck and select **Connect to Switch 2（连接 Switch 2）**.
+6. Open **Virtual Controller** in SplatoonDeck and select **Connect to Switch 2**.
 7. After it connects, test the on-screen controls or the default keyboard and mouse mappings.
 
-Keep using SplatoonDeck to control the game after connecting. Enabling another physical controller may disconnect the virtual controller. **Disconnect（断开连接）** stops only the virtual controller while leaving Bluetooth attached to SplatoonDeck for quick reconnection. To restore normal Windows Bluetooth, return to Setup Bay and select **Return Bluetooth to Windows（归还蓝牙给 Windows）**.
+Keep using SplatoonDeck to control the game after connecting. Enabling another physical controller may disconnect the virtual controller. **Disconnect** stops only the virtual controller while leaving Bluetooth attached to SplatoonDeck for quick reconnection. To restore normal Windows Bluetooth, return to Setup Bay and select **Return Bluetooth to Windows**.
 
 ### Play with keyboard and mouse
 
 - `W` `A` `S` `D` control the left stick by default; mouse movement controls the right stick.
-- Select **Enable Mouse → Right Stick（启用鼠标 → 右摇杆）** to lock the pointer inside the controller area. Press `Esc` to release it.
+- Select **Enable Mouse → Right Stick** to lock the pointer inside the controller area. Press `Esc` to release it.
 - Horizontal and vertical sensitivity can be adjusted independently.
-- Select **Custom Mapping（自定义映射）** to change keyboard keys, mouse buttons, and mouse-motion assignments.
+- Select **Custom Mapping** to change keyboard keys, mouse buttons, and mouse-motion assignments.
 - Every button, the D-pad, and both sticks can also be clicked or dragged directly on screen.
 
 ### Draw an image in Splatoon 3
 
 1. In Splatoon 3, enter the horizontal post-drawing canvas and leave it ready for drawing.
-2. Open **Ink Workshop（涂鸦工坊）** in SplatoonDeck and import a PNG, JPG, WebP, or BMP image.
+2. Open **Ink Workshop** in SplatoonDeck and import a PNG, JPG, WebP, or BMP image.
 3. Choose Contain, Cover, or Stretch, then adjust brightness, contrast, the black-and-white threshold, inversion, and dithering style.
 4. Check the final `320 × 120` monochrome preview on the right. The preview and automatic drawing use the same pixel data.
 5. The Auto scan mode is suitable for most images. Start with the default `45 ms` button interval.
-6. Select **Start Automatic Drawing（开始自动绘制）**. SplatoonDeck clears the canvas, moves to the starting point, switches to the smallest brush, and begins drawing automatically.
+6. Select **Start Automatic Drawing**. SplatoonDeck clears the canvas, moves to the starting point, switches to the smallest brush, and begins drawing automatically.
 7. While drawing, you can monitor the cursor, completed pixels, progress, and remaining time. SplatoonDeck performs the save confirmation when it finishes.
 
-If you stop midway, the image and its settings remain available. Update **Resume Start Row / Column（续画起始行 / 列）** from the displayed progress and start again. A resumed drawing does not clear the completed canvas.
+If you stop midway, the image and its settings remain available. Update **Resume Start Row / Column** from the displayed progress and start again. A resumed drawing does not clear the completed canvas.
 
 ## Interface preview
 
@@ -75,19 +75,19 @@ If you stop midway, the image and its settings remain available. Update **Resume
 
 Check the runtime environment, hand Bluetooth to SplatoonDeck, and return it to Windows when needed.
 
-![SplatoonDeck Setup Bay](./docs/screenshots/setup.png)
+![SplatoonDeck Setup Bay](./docs/screenshots/localized/en/setup.png)
 
 ### Virtual Controller
 
 Operate Switch 2 through a Pro Controller-inspired interface or custom keyboard and mouse mappings.
 
-![SplatoonDeck Virtual Controller](./docs/screenshots/controller.png)
+![SplatoonDeck Virtual Controller](./docs/screenshots/localized/en/controller.png)
 
 ### Ink Workshop
 
 Import an image, tune its monochrome pixel treatment, preview the `320 × 120` game canvas, and start automatic drawing.
 
-![SplatoonDeck Ink Workshop](./docs/screenshots/studio.png)
+![SplatoonDeck Ink Workshop](./docs/screenshots/localized/en/studio.png)
 
 ## Main features
 
@@ -153,13 +153,13 @@ The preview canvas is always `320 × 120`. Auto mode chooses a row or column pat
 | `H` | Home |
 | `C` | Capture |
 
-All mappings can be changed under **Virtual Controller → Custom Mapping（虚拟手柄 → 自定义映射）**.
+All mappings can be changed under **Virtual Controller → Custom Mapping**.
 
 ## FAQ
 
 ### Why does Bluetooth not return to Windows when I disconnect the controller?
 
-This lets SplatoonDeck reconnect to Switch 2 without taking over the adapter again. To restore Windows Bluetooth devices such as headphones and mice, select **Return Bluetooth to Windows（归还蓝牙给 Windows）** in Setup Bay.
+This lets SplatoonDeck reconnect to Switch 2 without taking over the adapter again. To restore Windows Bluetooth devices such as headphones and mice, select **Return Bluetooth to Windows** in Setup Bay.
 
 ### Can I use the virtual controller during automatic drawing?
 
@@ -167,7 +167,7 @@ No. Image settings and controller input are locked during drawing so an extra in
 
 ### How do I continue an interrupted drawing?
 
-Return to Ink Workshop, set **Resume Start Row / Column（续画起始行 / 列）** from the stopping point, keep the original image and other settings unchanged, and start again. Resume mode does not clear the canvas.
+Return to Ink Workshop, set **Resume Start Row / Column** from the stopping point, keep the original image and other settings unchanged, and start again. Resume mode does not clear the canvas.
 
 ### How can I get the most stable drawing result?
 
@@ -175,7 +175,7 @@ Start with the default `45 ms` interval and draw the built-in `8 × 7` calibrati
 
 ### How do I remove the environment created by SplatoonDeck?
 
-Return Bluetooth in Setup Bay, then select **Uninstall App Dependencies（卸载应用依赖）**. SplatoonDeck removes the dedicated environment it created.
+Return Bluetooth in Setup Bay, then select **Uninstall App Dependencies**. SplatoonDeck removes the dedicated environment it created.
 
 ## How it works and compatibility
 
