@@ -2,6 +2,7 @@ const { execFile, spawnSync } = require('node:child_process');
 const { promisify } = require('node:util');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 
 const execFileAsync = promisify(execFile);
 const DISTRO = 'SquidSketch';
@@ -67,6 +68,12 @@ function vidPidFromInstanceId(instanceId = '') {
 
 function isWslUnavailable(detail = '') {
   return /not enabled|is disabled|cannot start|not supported with your current|未启用|无法启动|当前计算机配置不支持|有効になっていません|無効になっています|起動できません|現在のコンピューター構成ではサポートされていません/i.test(detail);
+}
+
+function restartStillPending(marker, markerModifiedAt, bootedAt) {
+  if (!marker?.restartRequired) return false;
+  if (!Number.isFinite(markerModifiedAt) || !Number.isFinite(bootedAt)) return true;
+  return bootedAt <= markerModifiedAt;
 }
 
 function parseUsbipdState(output) {
@@ -155,6 +162,19 @@ class SystemManager {
   readMarker() { return this.readJson(this.markerPath); }
   readSession() { return this.readJson(this.sessionPath); }
 
+  reconcileRestartMarker() {
+    const marker = this.readMarker();
+    if (!marker?.restartRequired) return marker;
+    let markerModifiedAt;
+    try { markerModifiedAt = fs.statSync(this.markerPath).mtimeMs; } catch { return marker; }
+    const bootedAt = Date.now() - (os.uptime() * 1000);
+    if (restartStillPending(marker, markerModifiedAt, bootedAt)) return marker;
+    marker.restartRequired = false;
+    marker.restartCompletedAt = new Date().toISOString();
+    this.writeJson(this.markerPath, marker);
+    return marker;
+  }
+
   writeSession(device) {
     this.sessionBusId = device.busId;
     this.writeJson(this.sessionPath, {
@@ -221,7 +241,7 @@ class SystemManager {
     ]);
 
     const distroNames = distros.stdout.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-    const marker = this.readMarker();
+    const marker = this.reconcileRestartMarker();
     const attachedBusId = this.reconcileSession(usb.devices, usb.ok && usb.source === 'state');
     const wslDetail = wslStatus.stdout || wslStatus.stderr;
     return {
@@ -387,4 +407,4 @@ class SystemManager {
   }
 }
 
-module.exports = { SystemManager, DISTRO, capture, decodeOutput, isWslUnavailable, parseUsbipdList, parseUsbipdState, vidPidFromInstanceId };
+module.exports = { SystemManager, DISTRO, capture, decodeOutput, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, vidPidFromInstanceId };

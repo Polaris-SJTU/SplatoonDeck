@@ -10,6 +10,7 @@ const {
   isWslUnavailable,
   parseUsbipdList,
   parseUsbipdState,
+  restartStillPending,
   vidPidFromInstanceId
 } = require('./system-manager.cjs');
 
@@ -18,6 +19,14 @@ test('detects disabled WSL status messages in supported UI languages', () => {
   assert.equal(isWslUnavailable('WSL2 无法启动，因为此计算机上未启用虚拟化。'), true);
   assert.equal(isWslUnavailable('WSL 2 を起動できません。仮想化が有効になっていません。'), true);
   assert.equal(isWslUnavailable('默认分发: SquidSketch\r\n默认版本: 2'), false);
+});
+
+test('clears a restart request only after Windows has booted again', () => {
+  const marker = { restartRequired: true };
+  assert.equal(restartStillPending(marker, 2_000, 1_000), true);
+  assert.equal(restartStillPending(marker, 2_000, 3_000), false);
+  assert.equal(restartStillPending({ restartRequired: false }, 2_000, 1_000), false);
+  assert.equal(restartStillPending(marker, Number.NaN, 3_000), true);
 });
 
 test('decodes UTF-16LE WSL diagnostics and UTF-8 application output', () => {
