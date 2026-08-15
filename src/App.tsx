@@ -20,7 +20,7 @@ export default function App() {
   const [macroProgress, setMacroProgress] = useState<number | null>(null);
   const [macroElapsedMs, setMacroElapsedMs] = useState<number>(0);
   const [toast, setToast] = useState<string | null>(null);
-  const [version, setVersion] = useState('0.2.0');
+  const [version, setVersion] = useState('0.2.1');
   const drawingActive = macroProgress !== null && macroProgress < 1;
 
   const refreshStatus = useCallback(async () => {

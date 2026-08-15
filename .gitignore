@@ -7,6 +7,8 @@ release/
 coverage/
 .cache/
 .test-userdata/
+__pycache__/
+*.pyc
 build/packaged-icon-preview.png
 
 # Code signing certificate

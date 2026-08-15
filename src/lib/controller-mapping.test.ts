@@ -52,7 +52,10 @@ describe('controller input mappings', () => {
     const settings = loadMouseMotionSettings(JSON.stringify({ target: 'R_STICK', sensitivityX: 20, sensitivityY: 2, invertX: true, invertY: false }));
     expect(settings.sensitivityX).toBe(10);
     expect(settings.sensitivityY).toBe(2);
-    expect(mouseDeltaToStick(20, -4, settings)).toEqual({ x: -100, y: 9 });
+    const vector = mouseDeltaToStick(20, -4, settings);
+    expect(vector.x).toBeLessThan(-99);
+    expect(vector.y).toBeGreaterThan(15);
+    expect(vector.y).toBeLessThan(17);
   });
 
   it('migrates the old combined sensitivity to both axes', () => {
@@ -61,18 +64,33 @@ describe('controller input mappings', () => {
     expect(settings.sensitivityY).toBe(4.5);
   });
 
-  it('preserves vertical movement when the following mouse event only moves horizontally', () => {
+  it('does not leave a decaying axis tail on the following frame', () => {
     const settings = loadMouseMotionSettings(JSON.stringify({ target: 'R_STICK', sensitivityX: 3, sensitivityY: 3 }));
     const vertical = blendMouseDeltaToStick({ x: 0, y: 0 }, 0, -5, settings);
     const thenHorizontal = blendMouseDeltaToStick(vertical, 5, 0, settings);
-    expect(vertical).toEqual({ x: 0, y: 15 });
-    expect(thenHorizontal).toEqual({ x: 15, y: 5.25 });
+    expect(vertical.x).toBe(0);
+    expect(vertical.y).toBeGreaterThan(24);
+    expect(thenHorizontal.x).toBeGreaterThan(24);
+    expect(thenHorizontal.y).toBe(0);
   });
 
-  it('applies a visibly different gain at low and high sensitivity', () => {
+  it('applies a visibly different pre-saturation curve at low and high sensitivity', () => {
     const low = loadMouseMotionSettings(JSON.stringify({ target: 'R_STICK', sensitivityX: .5, sensitivityY: 3 }));
     const high = loadMouseMotionSettings(JSON.stringify({ target: 'R_STICK', sensitivityX: 10, sensitivityY: 3 }));
-    expect(mouseDeltaToStick(5, 0, low).x).toBeCloseTo(5.625);
-    expect(mouseDeltaToStick(5, 0, high).x).toBeCloseTo(41.25);
+    const lowX = mouseDeltaToStick(5, 0, low).x;
+    const highX = mouseDeltaToStick(5, 0, high).x;
+    expect(lowX).toBeGreaterThan(14);
+    expect(lowX).toBeLessThan(15);
+    expect(highX).toBeGreaterThan(75);
+    expect(highX).toBeGreaterThan(lowX * 5);
+  });
+
+  it('keeps horizontal and vertical sensitivity independent', () => {
+    const horizontalFast = loadMouseMotionSettings(JSON.stringify({ target: 'R_STICK', sensitivityX: 8, sensitivityY: 1 }));
+    const verticalFast = loadMouseMotionSettings(JSON.stringify({ target: 'R_STICK', sensitivityX: 1, sensitivityY: 8 }));
+    const a = mouseDeltaToStick(4, -4, horizontalFast);
+    const b = mouseDeltaToStick(4, -4, verticalFast);
+    expect(a.x).toBeGreaterThan(a.y * 3);
+    expect(b.y).toBeGreaterThan(b.x * 3);
   });
 });

@@ -54,9 +54,7 @@ export function nxbtMs(ms: number): number {
   return (ticks / NXBT_HZ) * 1000;
 }
 const STICK_LEFT = 'L_STICK@-100+000';
-const STICK_RIGHT = 'L_STICK@+100+000';
 const STICK_UP = 'L_STICK@+000+100';
-const STICK_DOWN = 'L_STICK@+000-100';
 const STICK_CENTER = 'L_STICK@+000+000';
 export function transformLuminance(value: number, brightness: number, contrast: number) {
   const brightened = value + brightness * 2.55;
@@ -181,17 +179,42 @@ export function processImage(image: HTMLImageElement, settings: ImageSettings) {
 }
 
 export function estimateScanCost(pixels: Uint8Array, width: number, height: number, direction: 'row' | 'column') {
-  let nonEmptyBands = 0;
+  // Boundary calibration is deliberately retained for strict positioning.
+  // Express its fixed time as an equivalent number of discrete moves so auto
+  // mode compares the real work: calibration + travel + paint taps.
+  const boundaryResetCost = 28;
+  let cost = 0;
+  let lastContentBand = -1;
   if (direction === 'row') {
     for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) { if (pixels[y * width + x]) { nonEmptyBands++; break; } }
+      let last = -1;
+      let black = 0;
+      for (let x = 0; x < width; x++) {
+        if (!pixels[y * width + x]) continue;
+        last = x;
+        black++;
+      }
+      if (last >= 0) {
+        cost += boundaryResetCost + last + black * 1.5;
+        lastContentBand = y;
+      }
     }
-    return nonEmptyBands * (width - 1);
+    return cost + Math.max(0, lastContentBand);
   }
   for (let x = 0; x < width; x++) {
-    for (let y = 0; y < height; y++) { if (pixels[y * width + x]) { nonEmptyBands++; break; } }
+    let last = -1;
+    let black = 0;
+    for (let y = 0; y < height; y++) {
+      if (!pixels[y * width + x]) continue;
+      last = y;
+      black++;
+    }
+    if (last >= 0) {
+      cost += boundaryResetCost + last + black * 1.5;
+      lastContentBand = x;
+    }
   }
-  return nonEmptyBands * (height - 1);
+  return cost + Math.max(0, lastContentBand);
 }
 
 export function resolveScanDirection(pixels: Uint8Array, width: number, height: number): 'row' | 'column' {
@@ -211,29 +234,21 @@ export function getDrawPath(pixels: Uint8Array, width: number, height: number, o
     const firstBlack = new Int32Array(height).fill(-1);
     const lastBlack = new Int32Array(height).fill(-1);
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (pixels[y * width + x]) { if (firstBlack[y] < 0) firstBlack[y] = x; lastBlack[y] = x; }
-    let direction = 1;
     for (let y = startBand; y <= endBand; y++) {
       if (firstBlack[y] < 0) continue;
-      const startX = direction > 0 ? firstBlack[y] : lastBlack[y];
-      const endX = direction > 0 ? lastBlack[y] : firstBlack[y];
-      for (let x = startX; direction > 0 ? x <= endX : x >= endX; x += direction) {
+      for (let x = firstBlack[y]; x <= lastBlack[y]; x++) {
         if (pixels[y * width + x]) path.push({ x, y });
       }
-      direction *= -1;
     }
   } else {
     const firstBlack = new Int32Array(width).fill(-1);
     const lastBlack = new Int32Array(width).fill(-1);
     for (let x = 0; x < width; x++) for (let y = 0; y < height; y++) if (pixels[y * width + x]) { if (firstBlack[x] < 0) firstBlack[x] = y; lastBlack[x] = y; }
-    let direction = 1;
     for (let x = startBand; x <= endBand; x++) {
       if (firstBlack[x] < 0) continue;
-      const startY = direction > 0 ? firstBlack[x] : lastBlack[x];
-      const endY = direction > 0 ? lastBlack[x] : firstBlack[x];
-      for (let y = startY; direction > 0 ? y <= endY : y >= endY; y += direction) {
+      for (let y = firstBlack[x]; y <= lastBlack[x]; y++) {
         if (pixels[y * width + x]) path.push({ x, y });
       }
-      direction *= -1;
     }
   }
   return path;
@@ -241,14 +256,14 @@ export function getDrawPath(pixels: Uint8Array, width: number, height: number, o
 
 export function generateMacro(pixels: Uint8Array, width: number, height: number, options: MacroOptions): MacroResult {
   if (pixels.length !== width * height) throw new Error('pixel data size mismatch');
-  // All operations (drawing taps and D-pad moves) use the same timing.
-  // Equal press and release durations guarantee the Switch registers each
-  // button press as a discrete event, preventing cursor acceleration or
-  // missed steps that cause pixel drift.
-  const pressMs = Math.max(120, Math.min(200, Math.round(options.pressDurationMs)));
-  const releaseMs = pressMs;
-  const pressSec = (pressMs / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-  const releaseSec = pressSec;
+  // D-pad taps must be long enough to span multiple controller reports, but
+  // stay well below the game's key-repeat window.  The previous 120–200 ms
+  // hold could be interpreted as two cursor steps.  Action buttons retain a
+  // longer pulse because some Switch menus sample them more slowly.
+  const movePressMs = Math.max(35, Math.min(90, Math.round(options.pressDurationMs)));
+  const moveReleaseMs = movePressMs;
+  const actionPressMs = Math.max(65, movePressMs);
+  const actionReleaseMs = Math.max(50, moveReleaseMs);
   const sec = (ms: number) => (ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
   const preference = options.scanDirection ?? 'auto';
   const scanDirection: 'row' | 'column' = preference === 'column' ? 'column' : preference === 'row' ? 'row' : resolveScanDirection(pixels, width, height);
@@ -261,15 +276,16 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   const plannedPixels = new Uint8Array(width * height);
   const pixelTimestamps: number[] = [];
   const tap = (button: string) => {
-    lines.push(`${button} ${pressSec}s`, `${releaseSec}s`);
+    lines.push(`${button} ${sec(actionPressMs)}s`, `${sec(actionReleaseMs)}s`);
     inputCount += 2;
-    totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
+    totalMs += nxbtMs(actionPressMs) + nxbtMs(actionReleaseMs);
   };
-  // D-pad moves use the same timing as drawing taps for reliability.
+  // Every move includes an explicit neutral phase, so consecutive commands
+  // are distinct rising edges rather than a held direction with auto-repeat.
   const moveTap = (button: string) => {
-    lines.push(`${button} ${pressSec}s`, `${releaseSec}s`);
+    lines.push(`${button} ${sec(movePressMs)}s`, `${sec(moveReleaseMs)}s`);
     inputCount += 2;
-    totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
+    totalMs += nxbtMs(movePressMs) + nxbtMs(moveReleaseMs);
   };
   const wait = (ms: number) => {
     lines.push(`${(ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}s`);
@@ -279,14 +295,16 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   // Emit a LOOP block that repeats a single-button tap N times.
   // NXBT expands this internally, dramatically reducing macro text size
   // for long D-pad sequences (canvas repositioning, band advancement).
-  const loopTap = (button: string, count: number) => {
+  const loopTap = (button: string, count: number, action = false) => {
     if (count <= 0) return;
+    const pressMs = action ? actionPressMs : movePressMs;
+    const releaseMs = action ? actionReleaseMs : moveReleaseMs;
     if (count === 1) {
-      lines.push(`${button} ${pressSec}s`, `${releaseSec}s`);
+      lines.push(`${button} ${sec(pressMs)}s`, `${sec(releaseMs)}s`);
       inputCount += 2;
       totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
     } else {
-      lines.push(`LOOP ${count}`, `  ${button} ${pressSec}s`, `  ${releaseSec}s`);
+      lines.push(`LOOP ${count}`, `  ${button} ${sec(pressMs)}s`, `  ${sec(releaseMs)}s`);
       inputCount += count * 2;
       totalMs += count * (nxbtMs(pressMs) + nxbtMs(releaseMs));
     }
@@ -299,14 +317,15 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
     lines.push(`${stickSpec} ${sec(ms)}s`);
     inputCount += 1;
     totalMs += nxbtMs(ms);
-    lines.push(`${STICK_CENTER} ${sec(100)}s`);
+    const settleMs = Math.max(100, moveReleaseMs * 2);
+    lines.push(`${STICK_CENTER} ${sec(settleMs)}s`);
     inputCount += 1;
-    totalMs += nxbtMs(100);
+    totalMs += nxbtMs(settleMs);
   };
 
   // --- Preparation ---
   // Reset brush to smallest size.
-  loopTap('L', 3);
+  loopTap('L', 3, true);
   if (startBand === 0) {
     tap('L_STICK_PRESS'); // L3 clears the canvas
     wait(500); // let the clear animation finish
@@ -323,7 +342,7 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   }
   const preparationDurationMs = totalMs;
 
-  // --- Content-bounded serpentine drawing ---
+  // --- Content-bounded, independently calibrated band drawing ---
   // All positioning uses D-pad for reliable 1-pixel steps.
   // Helper: move cursor horizontally from currentX to targetX.
   const moveX = (curX: number, targetX: number): number => {

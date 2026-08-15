@@ -111,6 +111,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
   const stageRef = useRef<HTMLDivElement>(null);
   const [bindings, setBindings] = useState(loadInitialBindings);
   const [mouseMotion, setMouseMotion] = useState(loadInitialMouseMotion);
+  const mouseMotionRef = useRef(mouseMotion);
   const [mappingOpen, setMappingOpen] = useState(false);
   const [capturing, setCapturing] = useState<{ actionId: ControllerActionId; device: InputDevice } | null>(null);
   const [mouseLocked, setMouseLocked] = useState(false);
@@ -122,7 +123,10 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
   })), []);
 
   useEffect(() => localStorage.setItem(BINDINGS_STORAGE_KEY, JSON.stringify(bindings)), [bindings]);
-  useEffect(() => localStorage.setItem(MOUSE_MOTION_STORAGE_KEY, JSON.stringify(mouseMotion)), [mouseMotion]);
+  useEffect(() => {
+    mouseMotionRef.current = mouseMotion;
+    localStorage.setItem(MOUSE_MOTION_STORAGE_KEY, JSON.stringify(mouseMotion));
+  }, [mouseMotion]);
 
   const changeBinding = (actionId: ControllerActionId, device: InputDevice, value: string | number | null) => {
     setBindings((current) => assignBinding(current, actionId, device, value));
@@ -168,8 +172,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
     let displayTimer: number | null = null;
     let motionFrame: number | null = null;
     const pendingMovement = { x: 0, y: 0 };
-    let rawMovementY = 0;
-    let rawMovementAt = 0;
+    let lastRawPointerAt = Number.NEGATIVE_INFINITY;
 
     const clamp = (value: number) => Math.max(-100, Math.min(100, Math.round(value)));
     const emitStick = (stick: 'L_STICK' | 'R_STICK') => {
@@ -231,31 +234,42 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       event.preventDefault(); pressInput(`mouse:${event.button}`, actionId);
     };
     const mouseup = (event: MouseEvent) => releaseInput(`mouse:${event.button}`);
-    const rawPointerMove = (event: Event) => {
-      const pointer = event as PointerEvent;
-      if (pointer.pointerType !== 'mouse') return;
-      rawMovementY = pointer.movementY;
-      rawMovementAt = Date.now();
-    };
-    const mousemove = (event: MouseEvent) => {
-      if (!connected || inputLocked || document.pointerLockElement !== stageRef.current || mouseMotion.target === 'off') return;
-      const stick = mouseMotion.target;
-      const movementY = event.movementY === 0 && Date.now() - rawMovementAt < 24 ? rawMovementY : event.movementY;
-      pendingMovement.x += event.movementX;
+    const queueMouseMovement = (movementX: number, movementY: number) => {
+      const settings = mouseMotionRef.current;
+      if (!connected || inputLocked || document.pointerLockElement !== stageRef.current || settings.target === 'off') return;
+      pendingMovement.x += movementX;
       pendingMovement.y += movementY;
       if (motionFrame !== null) return;
       motionFrame = window.requestAnimationFrame(() => {
         motionFrame = null;
         const movement = { ...pendingMovement };
         pendingMovement.x = 0; pendingMovement.y = 0;
-        motion[stick] = blendMouseDeltaToStick(motion[stick], movement.x, movement.y, mouseMotion);
+        const currentSettings = mouseMotionRef.current;
+        if (currentSettings.target === 'off') return;
+        const stick = currentSettings.target;
+        motion[stick] = blendMouseDeltaToStick(motion[stick], movement.x, movement.y, currentSettings);
         setMouseVector(motion[stick]);
         emitStick(stick);
         if (motionTimer !== null) window.clearTimeout(motionTimer);
         if (displayTimer !== null) window.clearTimeout(displayTimer);
-        motionTimer = window.setTimeout(() => { motion[stick] = { x: 0, y: 0 }; emitStick(stick); }, 60);
-        displayTimer = window.setTimeout(() => setMouseVector({ x: 0, y: 0 }), 140);
+        // Two 120 Hz controller reports are enough to apply the impulse while
+        // keeping stop latency close to a native FPS mouse.
+        motionTimer = window.setTimeout(() => { motion[stick] = { x: 0, y: 0 }; emitStick(stick); }, 24);
+        displayTimer = window.setTimeout(() => setMouseVector({ x: 0, y: 0 }), 48);
       });
+    };
+    const rawPointerMove = (event: Event) => {
+      const pointer = event as PointerEvent;
+      if (pointer.pointerType !== 'mouse') return;
+      lastRawPointerAt = performance.now();
+      queueMouseMovement(pointer.movementX, pointer.movementY);
+    };
+    const mousemove = (event: MouseEvent) => {
+      // Chromium emits mousemove alongside pointerrawupdate.  Ignore the
+      // coalesced duplicate when raw input is flowing, but retain mousemove as
+      // a fallback on systems where raw pointer events are unavailable.
+      if (performance.now() - lastRawPointerAt < 32) return;
+      queueMouseMovement(event.movementX, event.movementY);
     };
     const contextmenu = (event: MouseEvent) => {
       if (connected && resolveBinding(bindings, 'mouse', 2) && !(event.target instanceof Element && event.target.closest('.mapping-dialog'))) event.preventDefault();
@@ -280,7 +294,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       window.removeEventListener('contextmenu', contextmenu); window.removeEventListener('blur', releaseAll);
       document.removeEventListener('pointerlockchange', pointerLockChange); document.removeEventListener('visibilitychange', visibility);
     };
-  }, [bindings, capturing, connected, inputLocked, mappingOpen, mouseMotion]);
+  }, [bindings, capturing, connected, inputLocked, mappingOpen]);
 
   useEffect(() => {
     if (inputLocked && document.pointerLockElement) document.exitPointerLock();
@@ -292,10 +306,18 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
     setCapturing(null); setMappingOpen(true);
   };
   const closeMapping = () => { setCapturing(null); setMappingOpen(false); };
-  const toggleMouseControl = () => {
+  const toggleMouseControl = async () => {
     if (mouseMotion.target === 'off') { openMapping(); return; }
     if (document.pointerLockElement === stageRef.current) document.exitPointerLock();
-    else if (connected && !inputLocked) stageRef.current?.requestPointerLock();
+    else if (connected && !inputLocked && stageRef.current) {
+      try {
+        // Raw/unadjusted movement matches FPS controls by bypassing Windows
+        // pointer acceleration.  Fall back cleanly on older Chromium builds.
+        await stageRef.current.requestPointerLock({ unadjustedMovement: true });
+      } catch {
+        await stageRef.current.requestPointerLock();
+      }
+    }
   };
   const restoreDefaults = () => {
     setBindings(createDefaultBindings());

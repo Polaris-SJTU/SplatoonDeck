@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from 'vitest';
-import { createCalibrationPixels, ditherLuminance, estimateScanCost, generateMacro, pixelChecksum, resolveScanDirection, transformLuminance } from './image';
+import { createCalibrationPixels, ditherLuminance, estimateScanCost, generateMacro, getDrawPath, pixelChecksum, resolveScanDirection, transformLuminance } from './image';
 
 function simulateDrawing(macro: string, width: number, height: number, _startBand: number, direction: 'row' | 'column' = 'row') {
   // Parse macro lines: waits (start with digit), buttons (everything else),
@@ -67,20 +67,20 @@ describe('image pipeline', () => {
     expect(transformLuminance(5, -100, 0)).toBe(0);
   });
 
-  it('generates a verified D-pad-only serpentine macro', () => {
+  it('generates a verified boundary-calibrated D-pad macro', () => {
     const pixels = new Uint8Array([1, 0, 0, 1, 0, 1, 0, 0]);
     const result = generateMacro(pixels, 4, 2, { pressDurationMs: 50, autoSave: false, scanDirection: 'row' });
     expect(result.blackPixels).toBe(3);
-    expect(result.macro).toContain('A 0.12s');
-    expect(result.macro).toContain('DPAD_DOWN 0.12s'); // moveTap uses shorter duration
+    expect(result.macro).toContain('A 0.065s');
+    expect(result.macro).toContain('DPAD_DOWN 0.05s');
     // Stick boundary reset: always hits LEFT wall (consistent direction).
     expect(result.macro).toContain('L_STICK@-100+000');
     expect(result.macro).not.toContain('L_STICK@+100+000');
     // Brush reset uses LOOP syntax: LOOP 3 / L / release
     expect(result.macro.split('\n').slice(0, 3)).toEqual([
-      'LOOP 3', '  L 0.12s', '  0.12s'
+      'LOOP 3', '  L 0.065s', '  0.05s'
     ]);
-    expect(result.macro).toContain('L_STICK_PRESS 0.12s');
+    expect(result.macro).toContain('L_STICK_PRESS 0.065s');
     expect(result.preparationDurationMs).toBeGreaterThan(0);
     expect(result.inputCount).toBeGreaterThan(0);
     expect(result.verified).toBe(true);
@@ -188,11 +188,45 @@ describe('image pipeline', () => {
     expect(resolveScanDirection(tall, 2, 8)).toBe('column');
   });
 
-  it('estimates scan cost proportional to non-empty bands times band length', () => {
+  it('estimates scan cost from boundary resets, actual travel and paint taps', () => {
     const pixels = new Uint8Array(6 * 3);
     pixels[0] = 1; pixels[6] = 1;
-    expect(estimateScanCost(pixels, 6, 3, 'row')).toBe(2 * 5);
-    expect(estimateScanCost(pixels, 6, 3, 'column')).toBe(1 * 2);
+    expect(estimateScanCost(pixels, 6, 3, 'row')).toBe(60);
+    expect(estimateScanCost(pixels, 6, 3, 'column')).toBe(32);
+  });
+
+  it('keeps movement pulses below the repeat window and speeds up when requested', () => {
+    const pixels = new Uint8Array([1, 0, 0, 1]);
+    const fast = generateMacro(pixels, 4, 1, { pressDurationMs: 10, autoSave: false, scanDirection: 'row' });
+    const slow = generateMacro(pixels, 4, 1, { pressDurationMs: 90, autoSave: false, scanDirection: 'row' });
+    expect(fast.macro).toContain('DPAD_RIGHT 0.035s');
+    expect(slow.macro).toContain('DPAD_RIGHT 0.09s');
+    expect(fast.durationMs).toBeLessThan(slow.durationMs);
+    for (const line of fast.macro.split('\n').filter((entry) => /DPAD_(LEFT|RIGHT|UP|DOWN)/.test(entry))) {
+      const seconds = Number(line.trim().split(/\s+/)[1]?.replace('s', ''));
+      expect(seconds).toBeGreaterThanOrEqual(.035);
+      expect(seconds).toBeLessThan(.1);
+    }
+  });
+
+  it('cuts traversal time substantially without removing boundary calibration', () => {
+    const pixels = new Uint8Array(320);
+    pixels[0] = 1;
+    pixels[319] = 1;
+    const optimized = generateMacro(pixels, 320, 1, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' });
+    const conservative = generateMacro(pixels, 320, 1, { pressDurationMs: 90, autoSave: false, scanDirection: 'row' });
+    expect(optimized.macro).toContain('L_STICK@-100+000');
+    expect(optimized.durationMs).toBeLessThan(conservative.durationMs * .7);
+    expect([...simulateDrawing(optimized.macro, 320, 1, 0)]).toEqual([...pixels]);
+  });
+
+  it('reports the same left-to-right paint order used by the calibrated macro', () => {
+    const width = 5;
+    const pixels = new Uint8Array(width * 2);
+    pixels[1] = 1; pixels[4] = 1; pixels[width] = 1; pixels[width + 3] = 1;
+    expect(getDrawPath(pixels, width, 2, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' })).toEqual([
+      { x: 1, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 1 }, { x: 3, y: 1 }
+    ]);
   });
 
   it('emits stick boundary reset before each content row in row scan', () => {

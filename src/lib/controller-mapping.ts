@@ -110,11 +110,19 @@ export function loadMouseMotionSettings(raw: string | null): MouseMotionSettings
 
 export function mouseDeltaToStick(movementX: number, movementY: number, settings: MouseMotionSettings) {
   const clamp = (value: number) => Math.max(-100, Math.min(100, value));
-  const gainX = .75 + settings.sensitivityX * .75;
-  const gainY = .75 + settings.sensitivityY * .75;
+  // A mouse is a relative device while a controller stick represents camera
+  // velocity.  Map each accumulated frame delta through a smooth saturation
+  // curve: tiny movements remain precise, quick flicks can still reach full
+  // deflection, and the sensitivity controls alter the curve before clipping.
+  const gain = (sensitivity: number) => 2 ** ((sensitivity - 3) / 3);
+  const curve = (movement: number, sensitivity: number) => {
+    if (movement === 0) return 0;
+    const magnitude = 100 * (1 - Math.exp(-Math.abs(movement) * gain(sensitivity) / 18));
+    return clamp(Math.sign(movement) * magnitude);
+  };
   return {
-    x: clamp(movementX * gainX * (settings.invertX ? -1 : 1)),
-    y: clamp(-movementY * gainY * (settings.invertY ? -1 : 1))
+    x: curve(movementX, settings.sensitivityX) * (settings.invertX ? -1 : 1),
+    y: curve(-movementY, settings.sensitivityY) * (settings.invertY ? -1 : 1)
   };
 }
 
@@ -124,12 +132,11 @@ export function blendMouseDeltaToStick(
   movementY: number,
   settings: MouseMotionSettings
 ) {
-  const delta = mouseDeltaToStick(movementX, movementY, settings);
-  const clamp = (value: number) => Math.max(-100, Math.min(100, value));
-  return {
-    x: clamp(movementX === 0 ? current.x * .35 : delta.x),
-    y: clamp(movementY === 0 ? current.y * .35 : delta.y)
-  };
+  // Keep the argument for migration compatibility with callers, but do not
+  // carry velocity from the previous frame.  FPS-style mouse look should stop
+  // on the axis that stopped moving instead of leaving a decaying stick tail.
+  void current;
+  return mouseDeltaToStick(movementX, movementY, settings);
 }
 
 export function loadBindings(raw: string | null): ControllerBindings {

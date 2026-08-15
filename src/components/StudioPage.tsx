@@ -62,7 +62,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
   const [fileName, setFileName] = useState('');
   const [settings, setSettings] = useState(defaultSettings);
   const [pixels, setPixels] = useState<Uint8Array | null>(null);
-  const [speed, setSpeed] = useState(120);
+  const [speed, setSpeed] = useState(45);
   const [scanDirection, setScanDirection] = useState<ScanDirection>('auto');
   const [startRow, setStartRow] = useState(1);
   const [endRow, setEndRow] = useState(CANVAS_HEIGHT);
@@ -210,7 +210,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
             <div className="segmented">
               {(['auto', 'row', 'column'] as ScanDirection[]).map((dir) => <button disabled={parametersLocked} key={dir} className={scanDirection === dir ? 'active' : ''} onClick={() => setScanDirection(dir)}>{dir === 'auto' ? '自动' : dir === 'row' ? '逐行' : '逐列'}</button>)}
             </div>
-            <Range disabled={parametersLocked} label="按键间隔 (ms)" value={speed} min={120} max={150} onChange={setSpeed} />
+            <Range disabled={parametersLocked} label="单步脉冲 (ms)" value={speed} min={35} max={90} onChange={setSpeed} />
             <RowRange label={resolvedDirection === 'row' ? '续画起始行' : '续画起始列'} value={startRow} min={1} max={bandMax} disabled={parametersLocked} onChange={changeStartRow} />
             <RowRange label={resolvedDirection === 'row' ? '本批结束行' : '本批结束列'} value={endRow} min={1} max={bandMax} disabled={parametersLocked} onChange={changeEndRow} />
             
@@ -221,7 +221,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
             <div className="draw-actions">
               {running ? <button className="ghost-button danger wide" onClick={stop}>■ 停止绘制</button> : <button className="primary-button hot-pink wide" disabled={!pixels || launching} onClick={start}>{launching ? '正在发送绘制指令…' : connection === 'connected' ? '▶ 开始自动绘制' : '连接手柄后开始'}</button>}
             </div>
-            <p className="fine-print center">预览与绘制共用同一份 320 × 120 二值矩阵；路径逐行访问每个像素坐标并在发送前完成一致性校验。绘制完成后自动按 + 键并确认发布作品。</p>
+            <p className="fine-print center">每次方向移动都包含独立按下与松开帧，并在每个非空行或列重新贴边校准；预览和绘制共用同一份 320 × 120 二值矩阵。绘制完成后自动按 + 键并确认发布作品。</p>
           </div>
         </article>
       </div>
