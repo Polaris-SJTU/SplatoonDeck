@@ -221,7 +221,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
             <div className="draw-actions">
               {running ? <button className="ghost-button danger wide" onClick={stop}>■ 停止绘制</button> : <button className="primary-button hot-pink wide" disabled={!pixels || launching} onClick={start}>{launching ? '正在发送绘制指令…' : connection === 'connected' ? '▶ 开始自动绘制' : '连接手柄后开始'}</button>}
             </div>
-            <p className="fine-print center">每次方向移动都包含独立按下与松开帧，并在每个非空行或列重新贴边校准；预览和绘制共用同一份 320 × 120 二值矩阵。绘制完成后自动按 + 键并确认发布作品。</p>
+            <p className="fine-print center">每次方向移动都包含独立按下与松开帧；逐行绘制会自适应选择左右边界，逐列绘制固定从顶部边界校准。预览和绘制共用同一份 320 × 120 二值矩阵。</p>
           </div>
         </article>
       </div>

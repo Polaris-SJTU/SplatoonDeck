@@ -29,6 +29,7 @@ const BINDINGS_STORAGE_KEY = 'squid-sketch.controller-bindings.v3';
 const LEGACY_BINDINGS_STORAGE_KEY = 'squid-sketch.controller-bindings.v2';
 const MOUSE_MOTION_STORAGE_KEY = 'squid-sketch.mouse-motion.v3';
 const LEGACY_MOUSE_MOTION_STORAGE_KEY = 'squid-sketch.mouse-motion.v2';
+const MOUSE_REPORT_INTERVAL_MS = 8;
 const GROUP_ORDER = ['面键', '肩键', '十字键', '系统键', '左摇杆', '右摇杆'] as const;
 const ACTIONS_BY_ID = new Map(CONTROLLER_ACTIONS.map((action) => [action.id, action]));
 const ControllerInputLock = createContext(false);
@@ -170,7 +171,9 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
     const motion: Record<'L_STICK' | 'R_STICK', { x: number; y: number }> = { L_STICK: { x: 0, y: 0 }, R_STICK: { x: 0, y: 0 } };
     let motionTimer: number | null = null;
     let displayTimer: number | null = null;
-    let motionFrame: number | null = null;
+    let motionFlushTimer: number | null = null;
+    let motionVisualFrame: number | null = null;
+    let lastMotionReportAt = Number.NEGATIVE_INFINITY;
     const pendingMovement = { x: 0, y: 0 };
     let lastRawPointerAt = Number.NEGATIVE_INFINITY;
 
@@ -214,8 +217,10 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       window.squidSketch.controller.stick('R_STICK', 0, 0);
       if (motionTimer !== null) window.clearTimeout(motionTimer);
       if (displayTimer !== null) window.clearTimeout(displayTimer);
-      if (motionFrame !== null) window.cancelAnimationFrame(motionFrame);
-      motionFrame = null;
+      if (motionFlushTimer !== null) window.clearTimeout(motionFlushTimer);
+      if (motionVisualFrame !== null) window.cancelAnimationFrame(motionVisualFrame);
+      motionFlushTimer = null;
+      motionVisualFrame = null;
       pendingMovement.x = 0; pendingMovement.y = 0;
     };
     const keydown = (event: KeyboardEvent) => {
@@ -234,29 +239,42 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       event.preventDefault(); pressInput(`mouse:${event.button}`, actionId);
     };
     const mouseup = (event: MouseEvent) => releaseInput(`mouse:${event.button}`);
+    const flushMouseMovement = () => {
+      motionFlushTimer = null;
+      lastMotionReportAt = performance.now();
+      const movement = { ...pendingMovement };
+      pendingMovement.x = 0; pendingMovement.y = 0;
+      const currentSettings = mouseMotionRef.current;
+      if (currentSettings.target === 'off' || (movement.x === 0 && movement.y === 0)) return;
+      const stick = currentSettings.target;
+      motion[stick] = blendMouseDeltaToStick(motion[stick], movement.x, movement.y, currentSettings);
+      // Send motion at the same cadence as the 120 Hz bridge instead of
+      // waiting for Chromium's usually-60 Hz paint frame.  The visual HUD is
+      // still coalesced through rAF so input latency improves without causing
+      // unnecessary React renders.
+      emitStick(stick);
+      if (motionVisualFrame === null) {
+        motionVisualFrame = window.requestAnimationFrame(() => {
+          motionVisualFrame = null;
+          setMouseVector(motion[stick]);
+        });
+      }
+      if (motionTimer !== null) window.clearTimeout(motionTimer);
+      if (displayTimer !== null) window.clearTimeout(displayTimer);
+      // Two to three 120 Hz controller reports apply the impulse while keeping
+      // stop latency close to a native FPS mouse.
+      motionTimer = window.setTimeout(() => { motion[stick] = { x: 0, y: 0 }; emitStick(stick); }, 24);
+      displayTimer = window.setTimeout(() => setMouseVector({ x: 0, y: 0 }), 48);
+    };
     const queueMouseMovement = (movementX: number, movementY: number) => {
       const settings = mouseMotionRef.current;
       if (!connected || inputLocked || document.pointerLockElement !== stageRef.current || settings.target === 'off') return;
       pendingMovement.x += movementX;
       pendingMovement.y += movementY;
-      if (motionFrame !== null) return;
-      motionFrame = window.requestAnimationFrame(() => {
-        motionFrame = null;
-        const movement = { ...pendingMovement };
-        pendingMovement.x = 0; pendingMovement.y = 0;
-        const currentSettings = mouseMotionRef.current;
-        if (currentSettings.target === 'off') return;
-        const stick = currentSettings.target;
-        motion[stick] = blendMouseDeltaToStick(motion[stick], movement.x, movement.y, currentSettings);
-        setMouseVector(motion[stick]);
-        emitStick(stick);
-        if (motionTimer !== null) window.clearTimeout(motionTimer);
-        if (displayTimer !== null) window.clearTimeout(displayTimer);
-        // Two 120 Hz controller reports are enough to apply the impulse while
-        // keeping stop latency close to a native FPS mouse.
-        motionTimer = window.setTimeout(() => { motion[stick] = { x: 0, y: 0 }; emitStick(stick); }, 24);
-        displayTimer = window.setTimeout(() => setMouseVector({ x: 0, y: 0 }), 48);
-      });
+      if (motionFlushTimer !== null) return;
+      const elapsed = performance.now() - lastMotionReportAt;
+      const delay = Math.max(0, MOUSE_REPORT_INTERVAL_MS - elapsed);
+      motionFlushTimer = window.setTimeout(flushMouseMovement, delay);
     };
     const rawPointerMove = (event: Event) => {
       const pointer = event as PointerEvent;
@@ -277,7 +295,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
     const pointerLockChange = () => {
       const locked = document.pointerLockElement === stageRef.current;
       setMouseLocked(locked);
-      if (!locked) setMouseVector({ x: 0, y: 0 });
+      if (!locked) releaseAll();
     };
     const visibility = () => { if (document.hidden) releaseAll(); };
 

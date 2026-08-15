@@ -2,8 +2,9 @@
 import { createCalibrationPixels, ditherLuminance, estimateScanCost, generateMacro, getDrawPath, pixelChecksum, resolveScanDirection, transformLuminance } from './image';
 
 function simulateDrawing(macro: string, width: number, height: number, _startBand: number, direction: 'row' | 'column' = 'row') {
-  // Parse macro lines: waits (start with digit), buttons (everything else),
-  // and LOOP blocks which NXBT expands inline.
+  // Parse LOOP blocks and then replay NXBT's actual state semantics. A line
+  // containing only a duration is a passive wait and leaves the previous HID
+  // state active; a new game action happens only on a button rising edge.
   // The simulator starts at (0, 0) and replays the entire macro including
   // preparation moves (L3 clear, D-pad repositioning) so the cursor state
   // matches what real hardware would do from a cold start.
@@ -28,24 +29,25 @@ function simulateDrawing(macro: string, width: number, height: number, _startBan
       i++;
     }
   }
-  const tokens = expanded.map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return { type: 'blank' as const };
-    if (/^\d/.test(trimmed)) return { type: 'wait' as const };
-    return { type: 'button' as const, button: trimmed.split(' ')[0] };
-  });
   const output = new Uint8Array(width * height);
   let x = 0;
   let y = 0;
-  for (const token of tokens) {
-    if (token.type !== 'button') continue;
-    if (token.button === 'A' && y < height && x < width) output[y * width + x] = 1;
-    if (token.button === 'DPAD_RIGHT') x = Math.min(width - 1, x + 1);
-    if (token.button === 'DPAD_LEFT') x = Math.max(0, x - 1);
-    if (token.button === 'DPAD_DOWN') y = Math.min(height - 1, y + 1);
-    if (token.button === 'DPAD_UP') y = Math.max(0, y - 1);
-    if (token.button.startsWith('L_STICK@')) {
-      const spec = token.button.substring(8);
+  let heldButtons = new Set<string>();
+  for (const line of expanded) {
+    const parts = line.trim().split(/\s+/);
+    // NXBT's set_macro_input() returns without changing the report when the
+    // parsed line has fewer than two tokens (a duration-only wait).
+    if (parts.length < 2) continue;
+    const commands = parts.slice(0, -1);
+    const nextButtons = new Set(commands.filter((command) => !command.includes('@')));
+    const rose = (button: string) => nextButtons.has(button) && !heldButtons.has(button);
+    if (rose('A') && y < height && x < width) output[y * width + x] = 1;
+    if (rose('DPAD_RIGHT')) x = Math.min(width - 1, x + 1);
+    if (rose('DPAD_LEFT')) x = Math.max(0, x - 1);
+    if (rose('DPAD_DOWN')) y = Math.min(height - 1, y + 1);
+    if (rose('DPAD_UP')) y = Math.max(0, y - 1);
+    for (const command of commands.filter((entry) => entry.startsWith('L_STICK@'))) {
+      const spec = command.substring(8);
       const xVal = parseInt(spec.substring(0, 4), 10);
       const yVal = parseInt(spec.substring(4, 8), 10);
       if (xVal < 0) x = 0;
@@ -53,6 +55,7 @@ function simulateDrawing(macro: string, width: number, height: number, _startBan
       if (yVal > 0) y = 0;
       else if (yVal < 0) y = height - 1;
     }
+    heldButtons = nextButtons;
   }
   return output;
 }
@@ -70,16 +73,18 @@ describe('image pipeline', () => {
   it('generates a verified boundary-calibrated D-pad macro', () => {
     const pixels = new Uint8Array([1, 0, 0, 1, 0, 1, 0, 0]);
     const result = generateMacro(pixels, 4, 2, { pressDurationMs: 50, autoSave: false, scanDirection: 'row' });
+    const macroLines = result.macro.split('\n');
     expect(result.blackPixels).toBe(3);
     expect(result.macro).toContain('A 0.065s');
     expect(result.macro).toContain('DPAD_DOWN 0.05s');
     // Stick boundary reset: always hits LEFT wall (consistent direction).
     expect(result.macro).toContain('L_STICK@-100+000');
     expect(result.macro).not.toContain('L_STICK@+100+000');
-    // Brush reset uses LOOP syntax: LOOP 3 / L / release
-    expect(result.macro.split('\n').slice(0, 3)).toEqual([
-      'LOOP 3', '  L 0.065s', '  0.05s'
-    ]);
+    // Brush reset uses LOOP syntax with one held input and one explicit
+    // neutral report per tap.
+    expect(macroLines[0]).toBe('LOOP 3');
+    expect(macroLines[1].trim()).toBe('L 0.065s');
+    expect(macroLines[2].trim()).toBe('L_STICK@+000+000 R_STICK@+000+000 0.05s');
     expect(result.macro).toContain('L_STICK_PRESS 0.065s');
     expect(result.preparationDurationMs).toBeGreaterThan(0);
     expect(result.inputCount).toBeGreaterThan(0);
@@ -95,13 +100,15 @@ describe('image pipeline', () => {
       pressDurationMs: 50, autoSave: false, startRow: 2, endRow: 2, scanDirection: 'row'
     });
     const lines = result.macro.split('\n');
-    // startRow=2 means 2 DPAD_DOWN moves, emitted as LOOP 2 with one body line.
+    // startRow=2 means 2 DPAD_DOWN moves, emitted as LOOP 2.
     const downLines = lines.filter((line) => line.trim().startsWith('DPAD_DOWN'));
     const loopLine = lines.find((line) => line.startsWith('LOOP 2'));
-    expect(downLines.length === 2 || (downLines.length === 1 && !!loopLine)).toBe(true);
+    expect(loopLine).toBeTruthy();
+    expect(downLines).toHaveLength(1);
     expect(lines.some((line) => line.startsWith('L_STICK_PRESS'))).toBe(false);
-    // Prep uses 2 stick wall-bounces (4 lines) + 1 per-row reset (2 lines) = 6.
-    expect(lines.filter((line) => line.startsWith('L_STICK@'))).toHaveLength(6);
+    // Prep uses 2 stick wall-bounces plus 1 per-row reset.
+    expect(lines.filter((line) => line.startsWith('L_STICK@-100+000'))).toHaveLength(2);
+    expect(lines.filter((line) => line.startsWith('L_STICK@+000+100'))).toHaveLength(1);
     expect(lines.filter((line) => line.startsWith('A '))).toHaveLength(1);
     expect(result.plannedBlackPixels).toBe(1);
     expect([...simulateDrawing(result.macro, 4, 4, 2)]).toEqual([...pixels]);
@@ -146,6 +153,30 @@ describe('image pipeline', () => {
     });
     expect(result.verified).toBe(true);
     expect([...simulateDrawing(result.macro, width, height, 0)]).toEqual([...pixels]);
+  });
+
+  it('round-trips deterministic random canvases through adaptive row and column plans', () => {
+    const width = 19;
+    const height = 11;
+    for (let seed = 1; seed <= 12; seed++) {
+      let state = seed;
+      const pixels = Uint8Array.from({ length: width * height }, () => {
+        state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+        return state % 7 === 0 ? 1 : 0;
+      });
+      for (const scanDirection of ['row', 'column'] as const) {
+        const result = generateMacro(pixels, width, height, {
+          pressDurationMs: 45, autoSave: false, scanDirection
+        });
+        const path = getDrawPath(pixels, width, height, {
+          pressDurationMs: 45, autoSave: false, scanDirection
+        });
+        expect(result.verified).toBe(true);
+        expect(path).toHaveLength(result.blackPixels);
+        expect(new Set(path.map(({ x, y }) => `${x},${y}`)).size).toBe(result.blackPixels);
+        expect([...simulateDrawing(result.macro, width, height, 0, scanDirection)]).toEqual([...pixels]);
+      }
+    }
   });
 
   it('fingerprints the exact 1-bit canvas dimensions and contents', () => {
@@ -195,37 +226,65 @@ describe('image pipeline', () => {
     expect(estimateScanCost(pixels, 6, 3, 'column')).toBe(32);
   });
 
-  it('keeps movement pulses below the repeat window and speeds up when requested', () => {
+  it('clamps movement pulses while preserving the requested speed range', () => {
     const pixels = new Uint8Array([1, 0, 0, 1]);
     const fast = generateMacro(pixels, 4, 1, { pressDurationMs: 10, autoSave: false, scanDirection: 'row' });
     const slow = generateMacro(pixels, 4, 1, { pressDurationMs: 90, autoSave: false, scanDirection: 'row' });
     expect(fast.macro).toContain('DPAD_RIGHT 0.035s');
     expect(slow.macro).toContain('DPAD_RIGHT 0.09s');
     expect(fast.durationMs).toBeLessThan(slow.durationMs);
-    for (const line of fast.macro.split('\n').filter((entry) => /DPAD_(LEFT|RIGHT|UP|DOWN)/.test(entry))) {
-      const seconds = Number(line.trim().split(/\s+/)[1]?.replace('s', ''));
-      expect(seconds).toBeGreaterThanOrEqual(.035);
-      expect(seconds).toBeLessThan(.1);
+    expect(fast.macro).not.toContain('R_STICK@+001+000');
+    expect(slow.macro).not.toContain('R_STICK@+001+000');
+  });
+
+  it('emits an explicit neutral HID report after every tap', () => {
+    const pixels = new Uint8Array([1, 0, 0, 1]);
+    const result = generateMacro(pixels, 4, 1, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' });
+    const lines = result.macro.split('\n').map((line) => line.trim()).filter(Boolean);
+    const neutral = 'L_STICK@+000+000 R_STICK@+000+000';
+
+    // In NXBT, a line containing only "0.045s" preserves the previous HID
+    // state.  Such a line would turn repeated D-pad taps into one long hold.
+    expect(lines.filter((line) => !line.startsWith('LOOP ') && /^\d/.test(line))).toEqual([]);
+    const activeButton = (line: string) => line.match(/^(A|L|L_STICK_PRESS|DPAD_(LEFT|RIGHT|UP|DOWN))\s/)?.[1] ?? null;
+    for (let index = 0; index < lines.length - 1; index++) {
+      const active = activeButton(lines[index]);
+      if (!active || activeButton(lines[index + 1]) === active) continue;
+      expect(lines[index + 1].startsWith(neutral)).toBe(true);
     }
   });
 
-  it('cuts traversal time substantially without removing boundary calibration', () => {
+  it('models NXBT duration-only waits as a held button, not a release', () => {
+    const staleMacro = [
+      'DPAD_RIGHT 0.05s', '0.05s',
+      'DPAD_RIGHT 0.05s', '0.05s',
+      'A 0.065s', 'L_STICK@+000+000 R_STICK@+000+000 0.05s'
+    ].join('\n');
+    const neutralMacro = staleMacro.replaceAll('0.05s\nDPAD_RIGHT', 'L_STICK@+000+000 R_STICK@+000+000 0.05s\nDPAD_RIGHT');
+    expect([...simulateDrawing(staleMacro, 3, 1, 0)]).toEqual([0, 1, 0]);
+    expect([...simulateDrawing(neutralMacro, 3, 1, 0)]).toEqual([0, 0, 1]);
+  });
+
+  it('splits distant edge content into two calibrated anchors', () => {
     const pixels = new Uint8Array(320);
     pixels[0] = 1;
     pixels[319] = 1;
     const optimized = generateMacro(pixels, 320, 1, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' });
-    const conservative = generateMacro(pixels, 320, 1, { pressDurationMs: 90, autoSave: false, scanDirection: 'row' });
     expect(optimized.macro).toContain('L_STICK@-100+000');
-    expect(optimized.durationMs).toBeLessThan(conservative.durationMs * .7);
+    expect(optimized.macro).toContain('L_STICK@+100+000');
+    expect(optimized.macro).not.toContain('DPAD_LEFT');
+    expect(optimized.macro).not.toContain('DPAD_RIGHT');
+    // Two wall calibrations are far faster than crossing all 319 columns.
+    expect(optimized.durationMs).toBeLessThan(15_000);
     expect([...simulateDrawing(optimized.macro, 320, 1, 0)]).toEqual([...pixels]);
   });
 
-  it('reports the same left-to-right paint order used by the calibrated macro', () => {
+  it('reports the same adaptive paint order used by the calibrated macro', () => {
     const width = 5;
     const pixels = new Uint8Array(width * 2);
     pixels[1] = 1; pixels[4] = 1; pixels[width] = 1; pixels[width + 3] = 1;
     expect(getDrawPath(pixels, width, 2, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' })).toEqual([
-      { x: 1, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 1 }, { x: 3, y: 1 }
+      { x: 4, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 3, y: 1 }
     ]);
   });
 

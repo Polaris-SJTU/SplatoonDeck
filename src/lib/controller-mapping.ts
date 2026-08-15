@@ -110,14 +110,18 @@ export function loadMouseMotionSettings(raw: string | null): MouseMotionSettings
 
 export function mouseDeltaToStick(movementX: number, movementY: number, settings: MouseMotionSettings) {
   const clamp = (value: number) => Math.max(-100, Math.min(100, value));
+  const stickDeadzoneCompensation = 12;
   // A mouse is a relative device while a controller stick represents camera
   // velocity.  Map each accumulated frame delta through a smooth saturation
   // curve: tiny movements remain precise, quick flicks can still reach full
   // deflection, and the sensitivity controls alter the curve before clipping.
+  // Splatoon ignores very small stick values, so lift non-zero mouse motion
+  // just past that deadzone while preserving the remaining 12..100 range.
   const gain = (sensitivity: number) => 2 ** ((sensitivity - 3) / 3);
   const curve = (movement: number, sensitivity: number) => {
     if (movement === 0) return 0;
-    const magnitude = 100 * (1 - Math.exp(-Math.abs(movement) * gain(sensitivity) / 18));
+    const normalized = 1 - Math.exp(-Math.abs(movement) * gain(sensitivity) / 18);
+    const magnitude = stickDeadzoneCompensation + (100 - stickDeadzoneCompensation) * normalized;
     return clamp(Math.sign(movement) * magnitude);
   };
   return {

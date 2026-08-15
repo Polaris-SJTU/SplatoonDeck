@@ -9,12 +9,73 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import queue
 import subprocess
 import sys
 import threading
 import time
 import traceback
+
+
+NXBT_REPORT_PATCH_MARKER = "SplatoonDeck full-state report cadence"
+
+
+def _replace_file(path: Path, source: str) -> None:
+    temporary_path = path.with_suffix(".py.splatoondeck.tmp")
+    temporary_path.write_text(source, encoding="utf-8")
+    temporary_path.replace(path)
+
+
+def ensure_nxbt_report_cadence(server_path: Path | None = None) -> tuple[Path, str]:
+    """Make NXBT report the unchanged held state at a real-controller cadence.
+
+    NXBT 0.1.4 normally sends a changed state once, then suppresses identical
+    HID reports for one second.  That makes a drawing step depend on a single
+    Bluetooth packet.  A real Pro Controller keeps reporting its full state.
+    Patch the pinned, isolated NXBT installation to send at roughly 66 Hz while
+    preserving byte-for-byte identical button and stick values.
+    """
+    if server_path is None:
+        python_dir = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        server_path = Path(sys.prefix) / "lib" / python_dir / "site-packages" / "nxbt" / "controller" / "server.py"
+    source = server_path.read_text(encoding="utf-8")
+
+    original = '''                # Cache the last packet to prevent overloading the switch
+                # with packets on the "Change Grip/Order" menu.
+                if msg[3:] != self.cached_msg:
+                    itr.sendall(msg)
+                    self.cached_msg = msg[3:]
+                # Send a blank packet every so often to keep the Switch
+                # from disconnecting from the controller.
+                elif self.tick >= 132:
+                    itr.sendall(msg)
+                    self.tick = 0
+'''
+    replacement = f'''                # {NXBT_REPORT_PATCH_MARKER}: a real Pro Controller sends
+                # its complete state continuously.  Keep immediate transitions,
+                # and resend the exact same report every two 132 Hz loop ticks.
+                if msg[3:] != self.cached_msg or self.tick >= 2:
+                    itr.sendall(msg)
+                    self.cached_msg = msg[3:]
+                    self.tick = 0
+'''
+    if NXBT_REPORT_PATCH_MARKER in source:
+        restored_source = source.replace(replacement, original, 1)
+        if restored_source == source:
+            raise RuntimeError("Installed NXBT contains an unknown SplatoonDeck report patch")
+        return server_path, restored_source
+    if original not in source:
+        raise RuntimeError("NXBT 0.1.4 report loop does not match the supported layout")
+
+    _replace_file(server_path, source.replace(original, replacement, 1))
+    return server_path, source
+
+
+def restore_nxbt_report_source(patch_state: tuple[Path, str]) -> None:
+    """Restore NXBT on disk after Python has loaded the patched class."""
+    server_path, original_source = patch_state
+    _replace_file(server_path, original_source)
 
 
 def emit(event_type: str, **payload) -> None:
@@ -76,12 +137,19 @@ def main() -> int:
     parser.add_argument("--reconnect", action="store_true")
     args = parser.parse_args()
 
+    nxbt_patch_state = None
     try:
         ensure_bluez()
+        nxbt_patch_state = ensure_nxbt_report_cadence()
         import nxbt
     except Exception as exc:  # pragma: no cover - runs in WSL
         emit("error", message=f"NXBT 加载失败：{exc}", code="NXBT_IMPORT")
         return 2
+    finally:
+        # ControllerServer is now loaded in memory. Restore NXBT on disk at
+        # once so baseline builds and other NXBT tools remain untouched.
+        if nxbt_patch_state is not None:
+            restore_nxbt_report_source(nxbt_patch_state)
 
     nx = None
     controller_index = None

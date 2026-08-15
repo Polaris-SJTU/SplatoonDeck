@@ -54,8 +54,14 @@ export function nxbtMs(ms: number): number {
   return (ticks / NXBT_HZ) * 1000;
 }
 const STICK_LEFT = 'L_STICK@-100+000';
+const STICK_RIGHT = 'L_STICK@+100+000';
 const STICK_UP = 'L_STICK@+000+100';
+const STICK_DOWN = 'L_STICK@+000-100';
 const STICK_CENTER = 'L_STICK@+000+000';
+// NXBT treats a duration-only macro line as a passive wait: it does not
+// update the HID report, so the previous button remains held.  Every release
+// and delay must therefore send an explicit all-neutral controller state.
+const NEUTRAL_INPUT = 'L_STICK@+000+000 R_STICK@+000+000';
 export function transformLuminance(value: number, brightness: number, contrast: number) {
   const brightened = value + brightness * 2.55;
   const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
@@ -178,41 +184,67 @@ export function processImage(image: HTMLImageElement, settings: ImageSettings) {
   return { pixels };
 }
 
+const BOUNDARY_RESET_COST = 28;
+type BandSegment = { edge: 'start' | 'end'; positions: number[] };
+type BandPlan = { segments: BandSegment[]; movementCost: number };
+
+/**
+ * Plan one row/column from calibrated canvas edges.  Besides choosing the
+ * nearest edge, the planner may split widely separated content into a start
+ * cluster and an end cluster.  This avoids crossing a large empty gap with
+ * hundreds of fallible D-pad taps and is faster whenever the saved movement
+ * outweighs one additional stick-to-wall calibration.
+ */
+function planBand(positions: number[], limit: number, allowEndAnchor = true): BandPlan {
+  if (positions.length === 0) return { segments: [], movementCost: 0 };
+  const startCost = BOUNDARY_RESET_COST + positions[positions.length - 1];
+  if (!allowEndAnchor) {
+    return { segments: [{ edge: 'start', positions: [...positions] }], movementCost: startCost };
+  }
+  const endCost = BOUNDARY_RESET_COST + (limit - 1 - positions[0]);
+  let best: BandPlan = startCost <= endCost
+    ? { segments: [{ edge: 'start', positions: [...positions] }], movementCost: startCost }
+    : { segments: [{ edge: 'end', positions: [...positions].reverse() }], movementCost: endCost };
+
+  for (let split = 0; split < positions.length - 1; split++) {
+    const splitCost = BOUNDARY_RESET_COST * 2
+      + positions[split]
+      + (limit - 1 - positions[split + 1]);
+    if (splitCost >= best.movementCost) continue;
+    best = {
+      segments: [
+        { edge: 'start', positions: positions.slice(0, split + 1) },
+        { edge: 'end', positions: positions.slice(split + 1).reverse() }
+      ],
+      movementCost: splitCost
+    };
+  }
+  return best;
+}
+
+function getBandPositions(pixels: Uint8Array, width: number, height: number, direction: 'row' | 'column', band: number) {
+  const positions: number[] = [];
+  const limit = direction === 'row' ? width : height;
+  for (let position = 0; position < limit; position++) {
+    const index = direction === 'row' ? band * width + position : position * width + band;
+    if (pixels[index]) positions.push(position);
+  }
+  return positions;
+}
+
 export function estimateScanCost(pixels: Uint8Array, width: number, height: number, direction: 'row' | 'column') {
   // Boundary calibration is deliberately retained for strict positioning.
   // Express its fixed time as an equivalent number of discrete moves so auto
-  // mode compares the real work: calibration + travel + paint taps.
-  const boundaryResetCost = 28;
+  // mode compares adaptive anchoring + travel + paint taps.
   let cost = 0;
   let lastContentBand = -1;
-  if (direction === 'row') {
-    for (let y = 0; y < height; y++) {
-      let last = -1;
-      let black = 0;
-      for (let x = 0; x < width; x++) {
-        if (!pixels[y * width + x]) continue;
-        last = x;
-        black++;
-      }
-      if (last >= 0) {
-        cost += boundaryResetCost + last + black * 1.5;
-        lastContentBand = y;
-      }
-    }
-    return cost + Math.max(0, lastContentBand);
-  }
-  for (let x = 0; x < width; x++) {
-    let last = -1;
-    let black = 0;
-    for (let y = 0; y < height; y++) {
-      if (!pixels[y * width + x]) continue;
-      last = y;
-      black++;
-    }
-    if (last >= 0) {
-      cost += boundaryResetCost + last + black * 1.5;
-      lastContentBand = x;
-    }
+  const bandCount = direction === 'row' ? height : width;
+  const limit = direction === 'row' ? width : height;
+  for (let band = 0; band < bandCount; band++) {
+    const positions = getBandPositions(pixels, width, height, direction, band);
+    if (positions.length === 0) continue;
+    cost += planBand(positions, limit, direction === 'row').movementCost + positions.length * 1.5;
+    lastContentBand = band;
   }
   return cost + Math.max(0, lastContentBand);
 }
@@ -230,24 +262,12 @@ export function getDrawPath(pixels: Uint8Array, width: number, height: number, o
   const startBand = Math.max(0, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.startRow ?? 0)));
   const endBand = Math.max(startBand, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.endRow ?? (scanDirection === 'row' ? height : width) - 1)));
   const path: DrawPathPoint[] = [];
-  if (scanDirection === 'row') {
-    const firstBlack = new Int32Array(height).fill(-1);
-    const lastBlack = new Int32Array(height).fill(-1);
-    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (pixels[y * width + x]) { if (firstBlack[y] < 0) firstBlack[y] = x; lastBlack[y] = x; }
-    for (let y = startBand; y <= endBand; y++) {
-      if (firstBlack[y] < 0) continue;
-      for (let x = firstBlack[y]; x <= lastBlack[y]; x++) {
-        if (pixels[y * width + x]) path.push({ x, y });
-      }
-    }
-  } else {
-    const firstBlack = new Int32Array(width).fill(-1);
-    const lastBlack = new Int32Array(width).fill(-1);
-    for (let x = 0; x < width; x++) for (let y = 0; y < height; y++) if (pixels[y * width + x]) { if (firstBlack[x] < 0) firstBlack[x] = y; lastBlack[x] = y; }
-    for (let x = startBand; x <= endBand; x++) {
-      if (firstBlack[x] < 0) continue;
-      for (let y = firstBlack[x]; y <= lastBlack[x]; y++) {
-        if (pixels[y * width + x]) path.push({ x, y });
+  const limit = scanDirection === 'row' ? width : height;
+  for (let band = startBand; band <= endBand; band++) {
+    const positions = getBandPositions(pixels, width, height, scanDirection, band);
+    for (const segment of planBand(positions, limit, scanDirection === 'row').segments) {
+      for (const position of segment.positions) {
+        path.push(scanDirection === 'row' ? { x: position, y: band } : { x: band, y: position });
       }
     }
   }
@@ -275,20 +295,28 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   let totalMs = 0;
   const plannedPixels = new Uint8Array(width * height);
   const pixelTimestamps: number[] = [];
-  const tap = (button: string) => {
-    lines.push(`${button} ${sec(actionPressMs)}s`, `${sec(actionReleaseMs)}s`);
-    inputCount += 2;
-    totalMs += nxbtMs(actionPressMs) + nxbtMs(actionReleaseMs);
+  const tapLines = (button: string, pressMs: number, releaseMs: number) => [
+    `${button} ${sec(pressMs)}s`,
+    `${NEUTRAL_INPUT} ${sec(releaseMs)}s`
+  ];
+  const appendTap = (button: string, pressMs: number, releaseMs: number) => {
+    const reports = tapLines(button, pressMs, releaseMs);
+    lines.push(...reports);
+    inputCount += reports.length;
+    totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
   };
-  // Every move includes an explicit neutral phase, so consecutive commands
-  // are distinct rising edges rather than a held direction with auto-repeat.
+  const tap = (button: string) => {
+    appendTap(button, actionPressMs, actionReleaseMs);
+  };
+  // Every move includes an explicit neutral report. Consecutive commands stay
+  // distinct rising edges instead of becoming one long held input in NXBT.
   const moveTap = (button: string) => {
-    lines.push(`${button} ${sec(movePressMs)}s`, `${sec(moveReleaseMs)}s`);
-    inputCount += 2;
-    totalMs += nxbtMs(movePressMs) + nxbtMs(moveReleaseMs);
+    appendTap(button, movePressMs, moveReleaseMs);
   };
   const wait = (ms: number) => {
-    lines.push(`${(ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}s`);
+    // Keep waits neutral too.  This matters after L3 clear and before menu
+    // actions, where a duration-only line would extend the prior button hold.
+    lines.push(`${NEUTRAL_INPUT} ${(ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}s`);
     inputCount += 1;
     totalMs += nxbtMs(ms);
   };
@@ -299,13 +327,14 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
     if (count <= 0) return;
     const pressMs = action ? actionPressMs : movePressMs;
     const releaseMs = action ? actionReleaseMs : moveReleaseMs;
+    const reports = tapLines(button, pressMs, releaseMs);
     if (count === 1) {
-      lines.push(`${button} ${sec(pressMs)}s`, `${sec(releaseMs)}s`);
-      inputCount += 2;
+      lines.push(...reports);
+      inputCount += reports.length;
       totalMs += nxbtMs(pressMs) + nxbtMs(releaseMs);
     } else {
-      lines.push(`LOOP ${count}`, `  ${button} ${sec(pressMs)}s`, `  ${sec(releaseMs)}s`);
-      inputCount += count * 2;
+      lines.push(`LOOP ${count}`, ...reports.map((report) => `  ${report}`));
+      inputCount += count * reports.length;
       totalMs += count * (nxbtMs(pressMs) + nxbtMs(releaseMs));
     }
   };
@@ -322,7 +351,6 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
     inputCount += 1;
     totalMs += nxbtMs(settleMs);
   };
-
   // --- Preparation ---
   // Reset brush to smallest size.
   loopTap('L', 3, true);
@@ -359,69 +387,46 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
     return targetY;
   };
   if (scanDirection === 'row') {
-    const firstBlack = new Int32Array(height).fill(-1);
-    const lastBlack = new Int32Array(height).fill(-1);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        if (pixels[y * width + x]) {
-          if (firstBlack[y] < 0) firstBlack[y] = x;
-          lastBlack[y] = x;
-        }
-      }
-    }
-    let currentX = 0;
     for (let y = startBand; y <= endBand; y++) {
-      if (firstBlack[y] < 0) {
+      const positions = getBandPositions(pixels, width, height, 'row', y);
+      const plan = planBand(positions, width, true);
+      if (plan.segments.length === 0) {
         if (y < endBand) moveTap('DPAD_DOWN');
         continue;
       }
-      // Stick boundary reset: always slam cursor to the LEFT wall.
-      // Consistent wall eliminates any directional bias in stick behavior.
-      stickHold(STICK_LEFT, 2500);
-      currentX = 0;
-      currentX = moveX(currentX, firstBlack[y]);
-      const scanEnd = lastBlack[y];
-      const scanLen = scanEnd - currentX + 1;
-      for (let step = 0; step < scanLen; step++) {
-        const index = y * width + currentX;
-       if (pixels[index]) { tap('A'); plannedPixels[index] = 1; pixelTimestamps.push(totalMs - preparationDurationMs); }
-       if (step < scanLen - 1) {
-         moveTap('DPAD_RIGHT');
-          currentX += 1;
+      for (const segment of plan.segments) {
+        stickHold(segment.edge === 'start' ? STICK_LEFT : STICK_RIGHT, 2500);
+        let currentX = segment.edge === 'start' ? 0 : width - 1;
+        for (const targetX of segment.positions) {
+          currentX = moveX(currentX, targetX);
+          const index = y * width + currentX;
+          tap('A');
+          plannedPixels[index] = 1;
+          pixelTimestamps.push(totalMs - preparationDurationMs);
         }
       }
       if (y < endBand) moveTap('DPAD_DOWN');
     }
   } else {
-    const firstBlack = new Int32Array(width).fill(-1);
-    const lastBlack = new Int32Array(width).fill(-1);
-    for (let x = 0; x < width; x++) {
-      for (let y = 0; y < height; y++) {
-        if (pixels[y * width + x]) {
-          if (firstBlack[x] < 0) firstBlack[x] = y;
-          lastBlack[x] = y;
-        }
-      }
-    }
-    let currentY = 0;
     for (let x = startBand; x <= endBand; x++) {
-      if (firstBlack[x] < 0) {
+      const positions = getBandPositions(pixels, width, height, 'column', x);
+      // Isolate the only variable under test: column scans always anchor from
+      // the top, while all pulse timings remain identical to the confirmed
+      // 45 ms baseline.
+      const plan = planBand(positions, height, false);
+      if (plan.segments.length === 0) {
         if (x < endBand) moveTap('DPAD_RIGHT');
         continue;
       }
-      // Stick boundary reset: always slam cursor to the TOP wall.
-      // Consistent wall eliminates any directional bias in stick behavior.
-      stickHold(STICK_UP, 2500);
-      currentY = 0;
-      currentY = moveY(currentY, firstBlack[x]);
-      const scanEnd = lastBlack[x];
-      const scanLen = scanEnd - currentY + 1;
-      for (let step = 0; step < scanLen; step++) {
-        const index = currentY * width + x;
-        if (pixels[index]) { tap('A'); plannedPixels[index] = 1; pixelTimestamps.push(totalMs - preparationDurationMs); }
-        if (step < scanLen - 1) {
-          moveTap('DPAD_DOWN');
-          currentY += 1;
+      for (const segment of plan.segments) {
+        stickHold(segment.edge === 'start' ? STICK_UP : STICK_DOWN, 2500);
+        let currentY = segment.edge === 'start' ? 0 : height - 1;
+        for (const targetY of segment.positions) {
+          currentY = moveY(currentY, targetY);
+          const index = currentY * width + x;
+          tap('A');
+          plannedPixels[index] = 1;
+          pixelTimestamps.push(totalMs - preparationDurationMs);
         }
       }
       if (x < endBand) moveTap('DPAD_RIGHT');
