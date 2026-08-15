@@ -33,14 +33,16 @@ SplatoonDeck 是一款面向 Splatoon 3 玩家的 Windows 工具。它可以把�
 - 电脑内置或已有的、可被应用识别的 USB 蓝牙控制器。
 - 首次准备环境时需要网络连接和管理员权限。
 
-下载当前版本：[`SplatoonDeck-0.2.2-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.2/SplatoonDeck-0.2.2-portable.exe)
+下载当前版本：[`SplatoonDeck-0.2.3-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.3/SplatoonDeck-0.2.3-portable.exe)
 
 SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 获取。
+
+`v0.2.3` 重点改善了新电脑上的环境准备与清理流程：安装结果会被准确记录，重启后可以继续完成剩余步骤，诊断信息更加清晰，卸载时也会根据安装记录清理由 SplatoonDeck 添加的组件。完整内容请查看 [v0.2.3 发布说明](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.2.3)。
 
 ### 第一次连接 Switch 2
 
 1. 运行 SplatoonDeck，进入“准备舱”。界面左下角可以随时切换简体中文、English 和日本語，选择会自动保存。
-2. 点击“检查 / 修复依赖”，按照提示完成 WSL 2、专用环境和蓝牙组件的准备。如果系统提示重启，请重启后继续。
+2. 点击“检查 / 修复依赖”，按照提示完成 WSL 2、专用环境和蓝牙组件的准备。如果系统提示重启，请重启 Windows、重新打开 SplatoonDeck，再次点击“检查 / 修复依赖”完成剩余步骤。
 3. 运行兼容性诊断，确认 WSL、USB/IP、BlueZ、NXBT 和蓝牙控制器均已就绪。
 4. 选择检测到的蓝牙控制器，点击“临时接管蓝牙”。
 5. 在 Switch 2 打开“手柄 → 更改握法/顺序”。
@@ -117,10 +119,11 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请�
 
 - 自动检测电脑中的 USB 蓝牙。
 - 在应用内安装、检查、修复和清理所需组件。
+- 跨重启保存安装进度和组件归属，重新打开应用后可以继续准备或安全清理。
 - 蓝牙可以临时交给 SplatoonDeck 使用，也可以随时归还 Windows。
 - 内置兼容性诊断，遇到问题时可以快速找到未准备好的项目。
 - 应用界面支持简体中文、English 和日本語，并会记住上次选择。
-- 独立保存运行环境，不会修改已有的 Linux 发行版。
+- 使用独立运行环境，不会改动已有的 Linux 发行版；清理时也会保留其他软件正在使用的共享环境。
 
 ## 图片效果
 
@@ -175,7 +178,7 @@ SplatoonDeck 会把导入图片转换成 38,400 个黑白像素。你可以在�
 
 ### 如何删除 SplatoonDeck 准备的环境？
 
-在“准备舱”归还蓝牙后点击“卸载应用依赖”。应用会清理为 SplatoonDeck 创建的专用环境。
+在“准备舱”归还蓝牙后点击“卸载应用依赖”。SplatoonDeck 会根据本机保存的安装记录，归还并解除由应用接管的蓝牙、删除专用 Linux 环境，并卸载由应用安装的 usbipd。只有在没有其他 WSL 发行版时，应用才会关闭由它启用的共享 Windows 功能。如果界面提示重启，重启一次即可完成关闭。
 
 ## 工作原理与兼容性
 

@@ -33,14 +33,16 @@ ESP32、Raspberry Pi、専用のコントローラー変換基板は必要あり
 - SplatoonDeck が検出できる、内蔵または既存の USB Bluetooth コントローラー。
 - 初回セットアップ時のインターネット接続と管理者権限。
 
-現在のバージョン：[`SplatoonDeck-0.2.2-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.2/SplatoonDeck-0.2.2-portable.exe)
+現在のバージョン：[`SplatoonDeck-0.2.3-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.3/SplatoonDeck-0.2.3-portable.exe)
 
 SplatoonDeck は単一ファイルのポータブルアプリなので、通常のインストールは不要です。今後のバージョンは [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) からダウンロードできます。
+
+`v0.2.3` では、新しい PC でのセットアップとクリーンアップを重点的に改善しました。インストール結果を正確に記録し、Windows 再起動後に残りの手順を続行できます。診断表示も分かりやすくなり、削除時は保存されたインストール記録に基づいて SplatoonDeck が追加したコンポーネントを整理します。詳しくは [v0.2.3 リリースノート](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.2.3)をご覧ください。
 
 ### 初めて Switch 2 に接続する
 
 1. SplatoonDeck を起動し、**セットアップ**を開きます。左下の言語セレクターで簡体字中国語、English、日本語をいつでも切り替えられ、選択内容は自動で保存されます。
-2. **依存関係を確認 / 修復**を選び、案内に従って WSL 2、専用環境、Bluetooth コンポーネントを準備します。再起動を求められた場合は、Windows を再起動してからアプリをもう一度開きます。
+2. **依存関係を確認 / 修復**を選び、案内に従って WSL 2、専用環境、Bluetooth コンポーネントを準備します。再起動を求められた場合は、Windows を再起動して SplatoonDeck を開き、もう一度 **依存関係を確認 / 修復**を選んで残りの手順を完了します。
 3. 互換性診断を実行し、WSL、USB/IP、BlueZ、NXBT、Bluetooth コントローラーがすべて準備完了になっていることを確認します。
 4. 検出された Bluetooth コントローラーを選び、**Bluetooth を一時接続**を押します。
 5. Switch 2 で **コントローラー → 持ちかた/順番を変える**を開きます。
@@ -117,10 +119,11 @@ Pro Controller をイメージした画面、またはカスタムのキーボ�
 
 - USB Bluetooth コントローラーを自動検出。
 - 必要なコンポーネントのインストール、確認、修復、削除をアプリ内で実行。
+- 再起動後もセットアップの進捗とコンポーネントの所有情報を保持し、準備の続行や安全なクリーンアップが可能。
 - Bluetooth を SplatoonDeck に一時的に渡し、いつでも Windows に返却可能。
 - 互換性診断を内蔵。
 - アプリ画面は簡体字中国語、English、日本語に対応し、前回の選択を記憶します。
-- 既存の Linux ディストリビューションを変更しない専用実行環境。
+- 既存の Linux ディストリビューションを変更しない専用実行環境。クリーンアップ時も、他のソフトウェアが使用している共有環境は保持します。
 
 ## 画像処理
 
@@ -175,7 +178,7 @@ SplatoonDeck は読み込んだ画像を 38,400 個の白黒ピクセルに変�
 
 ### SplatoonDeck が作成した環境を削除するには？
 
-セットアップ画面で Bluetooth を Windows に戻してから、**アプリ依存関係を削除**を押します。SplatoonDeck が作成した専用環境が削除されます。
+セットアップ画面で Bluetooth を Windows に戻してから、**アプリ依存関係を削除**を押します。保存されたインストール記録に基づいて Bluetooth の返却と共有解除、専用 Linux 環境の削除、アプリが導入した usbipd の削除を行います。SplatoonDeck が有効にした共有 Windows 機能は、他の WSL ディストリビューションがない場合にのみ無効化します。再起動を求められた場合は、Windows を一度再起動するとクリーンアップが完了します。
 
 ## 仕組みと互換性
 

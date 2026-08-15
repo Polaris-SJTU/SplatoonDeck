@@ -33,14 +33,16 @@ No ESP32, Raspberry Pi, or dedicated controller adapter is required. SplatoonDec
 - A built-in or existing USB Bluetooth controller that SplatoonDeck can detect.
 - An internet connection and administrator permission for the first-time setup.
 
-Download the current version: [`SplatoonDeck-0.2.2-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.2/SplatoonDeck-0.2.2-portable.exe)
+Download the current version: [`SplatoonDeck-0.2.3-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.3/SplatoonDeck-0.2.3-portable.exe)
 
 SplatoonDeck is a single-file portable app and does not need a traditional installation. For later versions, visit [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest).
+
+`v0.2.3` focuses on setup and cleanup on a fresh PC. Installation results are recorded accurately, setup continues correctly after restarting Windows, diagnostics are clearer, and cleanup uses the saved installation record to remove components added by SplatoonDeck. See the complete [v0.2.3 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.2.3).
 
 ### Connect to Switch 2 for the first time
 
 1. Run SplatoonDeck and open **Setup Bay**. Use the language selector at the bottom-left to switch between Simplified Chinese, English, and Japanese; your choice is saved automatically.
-2. Select **Check / Repair Dependencies** and follow the prompts to prepare WSL 2, the dedicated environment, and Bluetooth components. Restart Windows if requested, then reopen the app.
+2. Select **Check / Repair Dependencies** and follow the prompts to prepare WSL 2, the dedicated environment, and Bluetooth components. If Windows asks for a restart, restart it, reopen SplatoonDeck, and select **Check / Repair Dependencies** again to finish the remaining steps.
 3. Run the compatibility diagnostics and confirm that WSL, USB/IP, BlueZ, NXBT, and the Bluetooth controller are ready.
 4. Select the detected Bluetooth controller and choose **Temporarily Attach Bluetooth**.
 5. On Switch 2, open **Controllers → Change Grip/Order**.
@@ -117,10 +119,11 @@ Import an image, tune its monochrome pixel treatment, preview the `320 × 120` g
 
 - Automatic detection of USB Bluetooth controllers.
 - In-app installation, checking, repair, and cleanup of required components.
+- Setup progress and component ownership are preserved across restarts, so the app can safely continue setup or clean up later.
 - Temporarily hand Bluetooth to SplatoonDeck and return it to Windows at any time.
 - Built-in compatibility diagnostics.
 - The interface supports Simplified Chinese, English, and Japanese, and remembers your last choice.
-- A dedicated runtime environment that does not modify your existing Linux distributions.
+- A dedicated runtime that does not modify existing Linux distributions and preserves shared environments used by other software during cleanup.
 
 ## Image processing
 
@@ -175,7 +178,7 @@ Start with the default `45 ms` interval and draw the built-in `8 × 7` calibrati
 
 ### How do I remove the environment created by SplatoonDeck?
 
-Return Bluetooth in Setup Bay, then select **Uninstall App Dependencies**. SplatoonDeck removes the dedicated environment it created.
+Return Bluetooth in Setup Bay, then select **Uninstall App Dependencies**. SplatoonDeck uses its saved installation record to return and unshare Bluetooth, remove the dedicated Linux environment, and uninstall usbipd when the app installed it. Shared Windows features enabled by SplatoonDeck are disabled only when no other WSL distributions remain. If the app asks for a restart, restart Windows once to finish the cleanup.
 
 ## How it works and compatibility
 
