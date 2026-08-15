@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   SystemManager,
+  buildDependencyChildCommand,
   decodeOutput,
   isWslUnavailable,
   parseUsbipdList,
@@ -27,6 +28,19 @@ test('clears a restart request only after Windows has booted again', () => {
   assert.equal(restartStillPending(marker, 2_000, 3_000), false);
   assert.equal(restartStillPending({ restartRequired: false }, 2_000, 1_000), false);
   assert.equal(restartStillPending(marker, Number.NaN, 3_000), true);
+});
+
+test('removes an uninstalled lifecycle marker after Windows restarts', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'splatoon-deck-restart-cleanup-'));
+  try {
+    const manager = new SystemManager({ resourcesPath: temp, userDataPath: temp, emit: () => undefined });
+    manager.writeJson(manager.markerPath, { schema: 2, lifecycle: 'uninstalled', restartRequired: true, restartReason: 'uninstall' });
+    fs.utimesSync(manager.markerPath, new Date('2000-01-01'), new Date('2000-01-01'));
+    assert.equal(manager.reconcileRestartMarker(), null);
+    assert.equal(fs.existsSync(manager.markerPath), false);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test('decodes UTF-16LE WSL diagnostics and UTF-8 application output', () => {
@@ -145,6 +159,19 @@ test('dependency elevation bypasses execution policy and reports PowerShell erro
   assert.match(source, /if \(\$null -eq \$p\) \{ exit 1 \}/);
 });
 
+test('elevated dependency window streams progress and waits for confirmation on failure', () => {
+  const command = buildDependencyChildCommand({
+    script: "C:\\Program Files\\SplatoonDeck\\install.ps1",
+    statePath: "C:\\Users\\Player\\AppData\\state.json",
+    logPath: "C:\\Users\\Player\\AppData\\install.log"
+  });
+  assert.match(command, /Tee-Object -LiteralPath/);
+  assert.match(command, /Keep this window open/);
+  assert.match(command, /\[FAILED\]/);
+  assert.match(command, /Read-Host 'Press Enter to close this window'/);
+  assert.match(command, /Start-Sleep -Seconds 2/);
+});
+
 test('detects a freshly installed usbipd binary before PATH refresh', () => {
   const source = fs.readFileSync(path.join(__dirname, 'system-manager.cjs'), 'utf8');
   assert.match(source, /path\.join\(programFiles, 'usbipd-win', 'usbipd\.exe'\)/);
@@ -159,4 +186,20 @@ test('dependency scripts handle WSL paths, interrupted state and symmetric clean
   assert.match(uninstall, /\$state = @\{\}/);
   assert.match(uninstall, /Disable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform/);
   assert.match(uninstall, /bluetooth-session\.json/);
+  assert.match(install, /installedWslAppPackagesByApp/);
+  assert.match(install, /installedWslMsiProductsByApp/);
+  assert.match(install, /wslEnvironmentExistedBefore/);
+  assert.match(install, /if \(-not \$state\.wslEnvironmentExistedBefore\)/);
+  assert.match(uninstall, /Remove-AppxPackage/);
+  assert.match(uninstall, /msiexec\.exe/);
+  assert.match(uninstall, /restartReason = if \(\$restartNeeded\) \{ 'uninstall' \}/);
+  assert.match(uninstall, /lifecycle = 'uninstalled'/);
+});
+
+test('setup UI distinguishes install and uninstall restart states', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'SetupPage.tsx'), 'utf8');
+  assert.match(source, /status\.restartReason !== 'uninstall'/);
+  assert.match(source, /status\.restartReason === 'uninstall'/);
+  assert.match(source, /重启后可重新安装/);
+  assert.match(source, /依赖已卸载/);
 });

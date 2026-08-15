@@ -21,6 +21,9 @@ export default function SetupPage({ status, refresh, notify }: Props) {
   const activeBusId = status?.bluetooth.attachedBusId;
   const busId = selectedBusId || adapters[0]?.busId || '';
   const allReady = Boolean(status?.wsl.installed && status?.distro.installed && status?.usbipd.installed);
+  const installRestartPending = Boolean(status?.restartRequired && status.restartReason !== 'uninstall');
+  const uninstallRestartPending = Boolean(status?.restartRequired && status.restartReason === 'uninstall');
+  const dependenciesRemoved = status?.installMarker?.lifecycle === 'uninstalled';
   const steps = useMemo(() => [
     { title: 'WSL 2', detail: t('隔离运行 Linux 蓝牙协议栈'), ok: Boolean(status?.wsl.installed) },
     { title: t('专用环境'), detail: t('只存放 SplatoonDeck 的 BlueZ 与 NXBT'), ok: Boolean(status?.distro.installed) },
@@ -60,8 +63,11 @@ export default function SetupPage({ status, refresh, notify }: Props) {
         <button className="icon-button" onClick={refresh} aria-label={t('刷新')}>↻</button>
       </header>
 
-      {status?.restartRequired && (
+      {installRestartPending && (
         <div className="restart-banner"><strong>{t('需要重启 Windows')}</strong><span>{t('系统组件已启用。重启后再次点击“继续安装”即可，不会重复下载。')}</span></div>
+      )}
+      {uninstallRestartPending && (
+        <div className="restart-banner"><strong>{t('清理完成，等待重启')}</strong><span>{t('SplatoonDeck 添加的依赖已经移除；重启 Windows 后系统组件清理将完全生效。')}</span></div>
       )}
       {status?.bluetooth.recoveredSession && activeBusId && (
         <div className="restart-banner recovery-banner"><strong>{t('已恢复上次会话')}</strong><span>{t('检测到蓝牙仍由 WSL 接管，可点击“归还蓝牙”安全恢复 Windows 蓝牙。')}</span></div>
@@ -69,7 +75,7 @@ export default function SetupPage({ status, refresh, notify }: Props) {
 
       <div className="setup-grid">
         <article className="card setup-card">
-          <div className="card-title"><div><span className="step-kicker">STEP 01</span><h2>{t('运行环境')}</h2></div><StatusBadge ok={allReady} pending={Boolean(status?.restartRequired)} /></div>
+          <div className="card-title"><div><span className="step-kicker">STEP 01</span><h2>{t('运行环境')}</h2></div><StatusBadge ok={allReady && !uninstallRestartPending} pending={installRestartPending || uninstallRestartPending} /></div>
           <div className="dependency-list">
             {steps.map((step, index) => (
               <div className="dependency-row" key={step.title}>
@@ -79,8 +85,8 @@ export default function SetupPage({ status, refresh, notify }: Props) {
               </div>
             ))}
           </div>
-          <button className="primary-button lime" disabled={Boolean(busy)} onClick={() => action('install', () => window.squidSketch.system.install())}>
-            {busy === 'install' ? <i className="spinner" /> : '→'} {t(allReady ? '检查 / 修复依赖' : status?.restartRequired ? '重启后继续安装' : '一键安装依赖')}
+          <button className="primary-button lime" disabled={Boolean(busy) || uninstallRestartPending} onClick={() => action('install', () => window.squidSketch.system.install())}>
+            {busy === 'install' ? <i className="spinner" /> : '→'} {t(uninstallRestartPending ? '重启后可重新安装' : allReady ? '检查 / 修复依赖' : installRestartPending ? '重启后继续安装' : '一键安装依赖')}
           </button>
           <p className="fine-print">{t('安装需要管理员确认和网络连接；首次启用 WSL 可能要求重启。')}</p>
         </article>
@@ -101,8 +107,8 @@ export default function SetupPage({ status, refresh, notify }: Props) {
         </article>
 
         <article className="card safety-card">
-          <div><span className="step-kicker">SAFETY</span><h2>{t('不留下一滴墨水')}</h2><p>{t('清理只移除本应用创建的 Linux 环境、USB 共享记录和由它安装的 usbipd。发现其他软件在使用 WSL 时，共享系统功能会保留。')}</p></div>
-          <button className="ghost-button danger" disabled={Boolean(busy)} onClick={() => action('uninstall', () => window.squidSketch.system.uninstall())}>{t(busy === 'uninstall' ? '正在清理…' : '卸载应用依赖')}</button>
+          <div><span className="step-kicker">SAFETY</span><h2>{t('不留下一滴墨水')}</h2><p>{t('清理只移除本应用创建的 Linux 环境、WSL 运行时、USB 共享记录和 usbipd。安装前已有或正被其他软件使用的组件会保留。')}</p></div>
+          <button className="ghost-button danger" disabled={Boolean(busy) || dependenciesRemoved} onClick={() => action('uninstall', () => window.squidSketch.system.uninstall())}>{t(busy === 'uninstall' ? '正在清理…' : dependenciesRemoved ? '依赖已卸载' : '卸载应用依赖')}</button>
         </article>
       </div>
 

@@ -37,6 +37,7 @@ type SystemStatus = {
   bluetooth: { attachedBusId: string | null; candidates: UsbDevice[]; recoveredSession?: boolean };
   installMarker: Record<string, unknown> | null;
   restartRequired: boolean;
+  restartReason: 'install' | 'uninstall' | null;
 };
 
 type ControllerEvent = {

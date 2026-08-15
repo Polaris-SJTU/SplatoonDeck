@@ -33,11 +33,11 @@ ESP32、Raspberry Pi、専用のコントローラー変換基板は必要あり
 - SplatoonDeck が検出できる、内蔵または既存の USB Bluetooth コントローラー。
 - 初回セットアップ時のインターネット接続と管理者権限。
 
-現在のバージョン：[`SplatoonDeck-0.2.3-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.3/SplatoonDeck-0.2.3-portable.exe)
+現在のバージョン：[`SplatoonDeck-0.3.0-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.3.0/SplatoonDeck-0.3.0-portable.exe)
 
 SplatoonDeck は単一ファイルのポータブルアプリなので、通常のインストールは不要です。今後のバージョンは [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) からダウンロードできます。
 
-`v0.2.3` では、新しい PC でのセットアップとクリーンアップを重点的に改善しました。インストール結果を正確に記録し、Windows 再起動後に残りの手順を続行できます。診断表示も分かりやすくなり、削除時は保存されたインストール記録に基づいて SplatoonDeck が追加したコンポーネントを整理します。詳しくは [v0.2.3 リリースノート](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.2.3)をご覧ください。
+`v0.3.0` では、コントローラー操作マクロの録画と、回数指定または連続ループ再生を追加しました。環境管理も改善し、セットアップと削除のウィンドウに各手順とコマンド出力をリアルタイム表示します。失敗時は確認するまでウィンドウを閉じません。インストール継続の再起動とクリーンアップ完了の再起動を区別し、SplatoonDeck が WSL のない PC に追加した WSL ランタイムは削除時に取り除きます。既存または共有中の WSL 環境は保持します。詳しくは [v0.3.0 リリースノート](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0)をご覧ください。
 
 ### 初めて Switch 2 に接続する
 
@@ -128,6 +128,9 @@ Pro Controller をイメージした画面、またはカスタムのキーボ�
 
 - USB Bluetooth コントローラーを自動検出。
 - 必要なコンポーネントのインストール、確認、修復、削除をアプリ内で実行。
+- セットアップと削除の各手順・コマンド出力をリアルタイム表示し、失敗時は確認までウィンドウとログ位置を残します。
+- インストール用と削除用の再起動状態を区別し、削除後に「インストールを続行」と誤表示しません。
+- WSL がなかった PC では SplatoonDeck が追加した WSL ランタイムと Windows 機能を削除し、既存環境や他のディストリビューションは保持します。
 - 再起動後もセットアップの進捗とコンポーネントの所有情報を保持し、準備の続行や安全なクリーンアップが可能。
 - Bluetooth を SplatoonDeck に一時的に渡し、いつでも Windows に返却可能。
 - 互換性診断を内蔵。

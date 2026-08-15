@@ -76,6 +76,44 @@ function restartStillPending(marker, markerModifiedAt, bootedAt) {
   return bootedAt <= markerModifiedAt;
 }
 
+function quotePowerShell(value = '') {
+  return String(value).replace(/'/g, "''");
+}
+
+function buildDependencyChildCommand({ script, statePath, logPath, uninstall = false }) {
+  const action = uninstall ? 'Uninstalling dependencies' : 'Installing dependencies';
+  const finished = uninstall ? 'Dependency cleanup completed.' : 'Dependency setup completed.';
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'Continue'",
+    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+    `$Host.UI.RawUI.WindowTitle = 'SplatoonDeck - ${action}'`,
+    `New-Item -ItemType File -Force -Path '${quotePowerShell(logPath)}' | Out-Null`,
+    `Write-Host 'SplatoonDeck - ${action}' -ForegroundColor Cyan`,
+    "Write-Host 'Keep this window open while the operation is running.' -ForegroundColor DarkGray",
+    "Write-Host ''",
+    'try {',
+    `  & '${quotePowerShell(script)}' -StatePath '${quotePowerShell(statePath)}' *>&1 | Tee-Object -LiteralPath '${quotePowerShell(logPath)}' -Append`,
+    "  if (-not $?) { throw 'The dependency script did not complete successfully.' }",
+    "  Write-Host ''",
+    `  Write-Host '[DONE] ${finished}' -ForegroundColor Green`,
+    `  Write-Host 'Log: ${quotePowerShell(logPath)}' -ForegroundColor DarkGray`,
+    '  Start-Sleep -Seconds 2',
+    '  exit 0',
+    '} catch {',
+    '  $detail = ($_ | Out-String).Trim()',
+    `  $detail | Add-Content -LiteralPath '${quotePowerShell(logPath)}' -Encoding utf8`,
+    "  Write-Host ''",
+    "  Write-Host '[FAILED] The operation could not be completed.' -ForegroundColor Red",
+    '  Write-Host $detail -ForegroundColor Red',
+    `  Write-Host 'Log: ${quotePowerShell(logPath)}' -ForegroundColor Yellow`,
+    "  Write-Host ''",
+    "  [void](Read-Host 'Press Enter to close this window')",
+    '  exit 1',
+    '}'
+  ].join('; ');
+}
+
 function parseUsbipdState(output) {
   let parsed;
   try { parsed = JSON.parse(cleanOutput(output)); } catch { return []; }
@@ -169,7 +207,14 @@ class SystemManager {
     try { markerModifiedAt = fs.statSync(this.markerPath).mtimeMs; } catch { return marker; }
     const bootedAt = Date.now() - (os.uptime() * 1000);
     if (restartStillPending(marker, markerModifiedAt, bootedAt)) return marker;
+    if (marker.restartReason === 'uninstall' || marker.lifecycle === 'uninstalled') {
+      try { fs.unlinkSync(this.markerPath); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      return null;
+    }
     marker.restartRequired = false;
+    marker.restartReason = null;
     marker.restartCompletedAt = new Date().toISOString();
     this.writeJson(this.markerPath, marker);
     return marker;
@@ -255,7 +300,8 @@ class SystemManager {
         recoveredSession: Boolean(attachedBusId && this.recoveredAtStartup)
       },
       installMarker: marker,
-      restartRequired: Boolean(marker?.restartRequired)
+      restartRequired: Boolean(marker?.restartRequired),
+      restartReason: marker?.restartRequired ? (marker.restartReason || 'install') : null
     };
   }
 
@@ -264,19 +310,12 @@ class SystemManager {
     if (!fs.existsSync(script)) throw new Error(`缺少安装脚本：${script}`);
     const logPath = path.join(this.userDataPath, `${name}-${Date.now()}.log`);
     fs.mkdirSync(this.userDataPath, { recursive: true });
-    const quote = (value) => value.replace(/'/g, "''");
-    const childCommand = [
-      "$ErrorActionPreference = 'Stop'",
-      'try {',
-      `  & '${quote(script)}' -StatePath '${quote(this.markerPath)}' *>&1 | Out-File -LiteralPath '${quote(logPath)}' -Encoding utf8`,
-      '  if (-not $?) { exit 1 }',
-      '  if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit [int]$LASTEXITCODE }',
-      '  exit 0',
-      '} catch {',
-      `  ($_ | Out-String) | Add-Content -LiteralPath '${quote(logPath)}' -Encoding utf8`,
-      '  exit 1',
-      '}'
-    ].join('; ');
+    const childCommand = buildDependencyChildCommand({
+      script,
+      statePath: this.markerPath,
+      logPath,
+      uninstall: name.includes('uninstall')
+    });
     const encodedCommand = Buffer.from(childCommand, 'utf16le').toString('base64');
     const elevatedCommand = [
       "$ErrorActionPreference = 'Stop'",
@@ -407,4 +446,4 @@ class SystemManager {
   }
 }
 
-module.exports = { SystemManager, DISTRO, capture, decodeOutput, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, vidPidFromInstanceId };
+module.exports = { SystemManager, DISTRO, buildDependencyChildCommand, capture, decodeOutput, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, vidPidFromInstanceId };

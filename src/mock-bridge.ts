@@ -20,7 +20,8 @@ const status = (): SystemStatus => ({
   usbipd: { installed: true, devices: [mockAdapter], detail: '' },
   bluetooth: { attachedBusId, candidates: [mockAdapter] },
   installMarker: { preview: true },
-  restartRequired: false
+  restartRequired: false,
+  restartReason: null
 });
 
 if (import.meta.env.DEV && !window.squidSketch) {

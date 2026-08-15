@@ -33,11 +33,11 @@ SplatoonDeck 是一款面向 Splatoon 3 玩家的 Windows 工具。它可以把�
 - 电脑内置或已有的、可被应用识别的 USB 蓝牙控制器。
 - 首次准备环境时需要网络连接和管理员权限。
 
-下载当前版本：[`SplatoonDeck-0.2.3-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.3/SplatoonDeck-0.2.3-portable.exe)
+下载当前版本：[`SplatoonDeck-0.3.0-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.3.0/SplatoonDeck-0.3.0-portable.exe)
 
 SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 获取。
 
-`v0.2.3` 重点改善了新电脑上的环境准备与清理流程：安装结果会被准确记录，重启后可以继续完成剩余步骤，诊断信息更加清晰，卸载时也会根据安装记录清理由 SplatoonDeck 添加的组件。完整内容请查看 [v0.2.3 发布说明](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.2.3)。
+`v0.3.0` 增加了手柄操作宏的录制与循环回放，并进一步改善环境管理。安装和卸载窗口会实时显示每一步及命令输出；发生错误时窗口会保留，确认后才关闭。应用会区分“重启后继续安装”和“重启后完成清理”，卸载时还会移除由 SplatoonDeck 新增的 WSL 本体，同时保留用户原有或其他软件正在使用的 WSL 环境。完整内容请查看 [v0.3.0 发布说明](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0)。
 
 ### 第一次连接 Switch 2
 
@@ -128,6 +128,9 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请�
 
 - 自动检测电脑中的 USB 蓝牙。
 - 在应用内安装、检查、修复和清理所需组件。
+- 安装与卸载窗口实时显示步骤和命令输出，失败时等待用户确认并保留日志位置。
+- 准确区分安装重启和卸载重启，不会在清理后错误提示“继续安装”。
+- 如果电脑原先没有 WSL，会在卸载时清理由 SplatoonDeck 新增的 WSL 运行时和系统功能；已有环境及其他发行版会保留。
 - 跨重启保存安装进度和组件归属，重新打开应用后可以继续准备或安全清理。
 - 蓝牙可以临时交给 SplatoonDeck 使用，也可以随时归还 Windows。
 - 内置兼容性诊断，遇到问题时可以快速找到未准备好的项目。

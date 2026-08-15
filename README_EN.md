@@ -33,11 +33,11 @@ No ESP32, Raspberry Pi, or dedicated controller adapter is required. SplatoonDec
 - A built-in or existing USB Bluetooth controller that SplatoonDeck can detect.
 - An internet connection and administrator permission for the first-time setup.
 
-Download the current version: [`SplatoonDeck-0.2.3-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.2.3/SplatoonDeck-0.2.3-portable.exe)
+Download the current version: [`SplatoonDeck-0.3.0-portable.exe`](https://github.com/Polaris-SJTU/SplatoonDeck/releases/download/v0.3.0/SplatoonDeck-0.3.0-portable.exe)
 
 SplatoonDeck is a single-file portable app and does not need a traditional installation. For later versions, visit [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest).
 
-`v0.2.3` focuses on setup and cleanup on a fresh PC. Installation results are recorded accurately, setup continues correctly after restarting Windows, diagnostics are clearer, and cleanup uses the saved installation record to remove components added by SplatoonDeck. See the complete [v0.2.3 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.2.3).
+`v0.3.0` adds timed controller macro recording with fixed-count or continuous playback and further improves environment management. Setup and cleanup windows now show every step and command output in real time; on failure, the window stays open until you confirm. The app distinguishes a restart needed to continue setup from one needed to finish cleanup. If SplatoonDeck introduced WSL on a previously clean PC, cleanup also removes that WSL runtime while preserving pre-existing or actively shared WSL environments. See the complete [v0.3.0 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0).
 
 ### Connect to Switch 2 for the first time
 
@@ -128,6 +128,9 @@ Import an image, tune its monochrome pixel treatment, preview the `320 × 120` g
 
 - Automatic detection of USB Bluetooth controllers.
 - In-app installation, checking, repair, and cleanup of required components.
+- Live steps and command output in setup and cleanup windows; failures remain visible until confirmation and include the log location.
+- Separate setup and cleanup restart states, avoiding a misleading Continue Installation prompt after removal.
+- Removal of the WSL runtime and Windows features introduced by SplatoonDeck on a previously WSL-free PC, while preserving existing environments and other distributions.
 - Setup progress and component ownership are preserved across restarts, so the app can safely continue setup or clean up later.
 - Temporarily hand Bluetooth to SplatoonDeck and return it to Windows at any time.
 - Built-in compatibility diagnostics.
