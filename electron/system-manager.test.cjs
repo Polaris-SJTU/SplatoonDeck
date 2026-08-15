@@ -229,7 +229,8 @@ test('native helper retries and resumes the Ubuntu download safely', () => {
   assert.match(helper, /SHA256SUMS/);
   assert.match(helper, /ComputeSha256/);
   assert.match(helper, /The Ubuntu checksum did not match/);
-  assert.match(helper, /\/LimitAccess/);
+  assert.match(helper, /--install --no-distribution/);
+  assert.doesNotMatch(helper, /EnableFeature\(name\)/);
 });
 
 test('compiled native helper starts and captures live command output without elevation', () => {
