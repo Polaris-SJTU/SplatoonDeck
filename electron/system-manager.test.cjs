@@ -7,10 +7,27 @@ const path = require('node:path');
 const {
   SystemManager,
   decodeOutput,
+  isWslUnavailable,
   parseUsbipdList,
   parseUsbipdState,
+  restartStillPending,
   vidPidFromInstanceId
 } = require('./system-manager.cjs');
+
+test('detects disabled WSL status messages in supported UI languages', () => {
+  assert.equal(isWslUnavailable('WSL2 cannot start because virtualization is not enabled.'), true);
+  assert.equal(isWslUnavailable('WSL2 无法启动，因为此计算机上未启用虚拟化。'), true);
+  assert.equal(isWslUnavailable('WSL 2 を起動できません。仮想化が有効になっていません。'), true);
+  assert.equal(isWslUnavailable('默认分发: SquidSketch\r\n默认版本: 2'), false);
+});
+
+test('clears a restart request only after Windows has booted again', () => {
+  const marker = { restartRequired: true };
+  assert.equal(restartStillPending(marker, 2_000, 1_000), true);
+  assert.equal(restartStillPending(marker, 2_000, 3_000), false);
+  assert.equal(restartStillPending({ restartRequired: false }, 2_000, 1_000), false);
+  assert.equal(restartStillPending(marker, Number.NaN, 3_000), true);
+});
 
 test('decodes UTF-16LE WSL diagnostics and UTF-8 application output', () => {
   const wslText = '默认分发: Ubuntu\r\n默认版本: 2\r\n只能与 WSL 2 一起运行。';
@@ -90,6 +107,18 @@ test('recovers and clears a persisted Bluetooth session from structured state', 
   }
 });
 
+test('clears a persisted Bluetooth session when usbipd is unavailable', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'splatoon-deck-no-usbipd-'));
+  try {
+    const manager = new SystemManager({ resourcesPath: temp, userDataPath: temp, emit: () => undefined });
+    manager.writeSession({ busId: '1-4', instanceId: 'USB\\VID_8087&PID_0033\\A', description: 'Bluetooth' });
+    assert.equal(manager.reconcileSession([], false), null);
+    assert.equal(fs.existsSync(manager.sessionPath), false);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test('reads PowerShell UTF-8 JSON files that include a BOM', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'squid-sketch-bom-'));
   try {
@@ -107,4 +136,27 @@ test('disconnecting the virtual controller keeps Bluetooth attached to WSL', () 
   assert.ok(disconnectHandler, 'controller disconnect IPC handler is registered');
   assert.match(disconnectHandler, /controller\.disconnect\(\)/);
   assert.doesNotMatch(disconnectHandler, /releaseBluetooth/);
+});
+
+test('dependency elevation bypasses execution policy and reports PowerShell errors', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'system-manager.cjs'), 'utf8');
+  assert.match(source, /'-ExecutionPolicy','Bypass','-EncodedCommand'/);
+  assert.match(source, /\$ErrorActionPreference = 'Stop'/);
+  assert.match(source, /if \(\$null -eq \$p\) \{ exit 1 \}/);
+});
+
+test('detects a freshly installed usbipd binary before PATH refresh', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'system-manager.cjs'), 'utf8');
+  assert.match(source, /path\.join\(programFiles, 'usbipd-win', 'usbipd\.exe'\)/);
+  assert.match(source, /capture\(this\.usbipdExecutable, \['--version'\]\)/);
+});
+
+test('dependency scripts handle WSL paths, interrupted state and symmetric cleanup', () => {
+  const install = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'install-dependencies.ps1'), 'utf8');
+  const uninstall = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'uninstall-dependencies.ps1'), 'utf8');
+  assert.match(install, /Replace\('\\', '\\\\'\)/);
+  assert.match(install, /Could not resolve the Linux dependency setup path/);
+  assert.match(uninstall, /\$state = @\{\}/);
+  assert.match(uninstall, /Disable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform/);
+  assert.match(uninstall, /bluetooth-session\.json/);
 });

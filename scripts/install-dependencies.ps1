@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $Distro = 'SquidSketch'
 $AppRoot = Join-Path $env:LOCALAPPDATA 'SquidSketch'
 $WslRoot = Join-Path $AppRoot 'wsl'
@@ -68,7 +69,7 @@ if ($state.restartRequired) {
 }
 
 Write-Host '[3/5] Updating the WSL kernel'
-wsl.exe --update --web-download
+wsl.exe --update --web-download | Out-Null
 if ($LASTEXITCODE -ne 0) {
   Write-Warning "WSL online update was unavailable (exit code $LASTEXITCODE). Continuing with the installed WSL 2 kernel."
 }
@@ -82,7 +83,7 @@ if ($distros -notcontains $Distro) {
     Invoke-WebRequest -UseBasicParsing -Uri $rootfsUrl -OutFile $Archive
   }
   New-Item -ItemType Directory -Force -Path $WslRoot | Out-Null
-  wsl.exe --import $Distro $WslRoot $Archive --version 2
+  wsl.exe --import $Distro $WslRoot $Archive --version 2 | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "WSL distribution import failed with exit code $LASTEXITCODE" }
   $state.createdDistroByApp = $true
   Save-State
@@ -90,10 +91,20 @@ if ($distros -notcontains $Distro) {
 
 Write-Host '[5/5] Installing BlueZ, Python and NXBT'
 $linuxSetupWindowsPath = Join-Path $PSScriptRoot 'linux-setup.sh'
-$linuxSetupPath = (wsl.exe -d $Distro -u root -- wslpath -a $linuxSetupWindowsPath | ForEach-Object { ($_ -replace "`0", '').Trim() })
-wsl.exe -d $Distro -u root -- bash $linuxSetupPath
-if ($LASTEXITCODE -ne 0) { throw "Linux dependency setup failed with exit code $LASTEXITCODE" }
-wsl.exe --terminate $Distro
+$escapedLinuxSetupWindowsPath = $linuxSetupWindowsPath.Replace('\', '\\')
+$linuxSetupPath = (wsl.exe -d $Distro -u root -- wslpath -a $escapedLinuxSetupWindowsPath | ForEach-Object { ($_ -replace "`0", '').Trim() })
+if ($LASTEXITCODE -ne 0 -or -not $linuxSetupPath) {
+  throw 'Could not resolve the Linux dependency setup path.'
+}
+$linuxStdoutPath = Join-Path $AppRoot 'linux-setup.stdout.log'
+$linuxStderrPath = Join-Path $AppRoot 'linux-setup.stderr.log'
+$quotedLinuxSetupPath = '"' + $linuxSetupPath.Replace('"', '\"') + '"'
+$linuxProcess = Start-Process -FilePath 'wsl.exe' -ArgumentList @('-d', $Distro, '-u', 'root', '--', 'bash', $quotedLinuxSetupPath) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $linuxStdoutPath -RedirectStandardError $linuxStderrPath
+if ($linuxProcess.ExitCode -ne 0) {
+  $linuxError = if (Test-Path $linuxStderrPath) { (Get-Content -Tail 20 $linuxStderrPath) -join "`n" } else { '' }
+  throw "Linux dependency setup failed with exit code $($linuxProcess.ExitCode). $linuxError"
+}
+wsl.exe --terminate $Distro | Out-Null
 
 $state.restartRequired = $false
 $state.completed = $true
