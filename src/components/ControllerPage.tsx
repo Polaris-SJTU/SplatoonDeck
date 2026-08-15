@@ -26,6 +26,7 @@ import {
   ControllerPlaybackSettings
 } from '../lib/controller-macro';
 import { useI18n } from '../lib/i18n';
+import { isControllerUiTarget } from '../lib/controller-input-target';
 
 type Props = {
   connection: 'offline' | 'connecting' | 'pairing' | 'connected' | 'error';
@@ -399,6 +400,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
     };
     const keydown = (event: KeyboardEvent) => {
       if (!connected || inputLocked || mappingOpen || capturing) return;
+      if (isControllerUiTarget(event.target)) return;
       const actionId = resolveBinding(bindings, 'keyboard', event.code);
       if (!actionId) return;
       event.preventDefault(); pressInput(`keyboard:${event.code}`, actionId);
@@ -406,8 +408,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
     const keyup = (event: KeyboardEvent) => releaseInput(`keyboard:${event.code}`);
     const mousedown = (event: MouseEvent) => {
       if (!connected || inputLocked || mappingOpen || capturing) return;
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest('button, .analog-base, .mapping-dialog')) return;
+      if (isControllerUiTarget(event.target)) return;
       const actionId = resolveBinding(bindings, 'mouse', event.button);
       if (!actionId) return;
       event.preventDefault(); pressInput(`mouse:${event.button}`, actionId);
@@ -464,7 +465,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
       queueMouseMovement(event.movementX, event.movementY);
     };
     const contextmenu = (event: MouseEvent) => {
-      if (connected && resolveBinding(bindings, 'mouse', 2) && !(event.target instanceof Element && event.target.closest('.mapping-dialog'))) event.preventDefault();
+      if (connected && resolveBinding(bindings, 'mouse', 2) && !isControllerUiTarget(event.target)) event.preventDefault();
     };
     const pointerLockChange = () => {
       const locked = document.pointerLockElement === stageRef.current;
@@ -638,7 +639,7 @@ export default function ControllerPage({ connection, message, inputLocked, playb
         <div className="macro-playback-config">
           <strong>{t('回放方式')}</strong>
           <label className={playbackSettings.mode === 'count' ? 'active' : ''}><input disabled={recording || playbackActive || playbackLaunching} type="radio" checked={playbackSettings.mode === 'count'} onChange={() => setPlaybackSettings((current) => ({ ...current, mode: 'count' }))} />{t('指定次数')}</label>
-          <label className="macro-repeat-count"><input aria-label={t('回放次数')} disabled={recording || playbackActive || playbackLaunching || playbackSettings.mode !== 'count'} type="number" min="1" max="999" value={playbackSettings.repeatCount} onChange={(event) => setPlaybackSettings((current) => ({ ...current, repeatCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))} /><span>{t('次')}</span></label>
+          <label className="macro-repeat-count"><input aria-label={t('回放次数')} disabled={recording || playbackActive || playbackLaunching || playbackSettings.mode !== 'count'} type="number" min="1" max="999" value={playbackSettings.repeatCount} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setPlaybackSettings((current) => ({ ...current, repeatCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))} /><span>{t('次')}</span></label>
           <label className={playbackSettings.mode === 'infinite' ? 'active' : ''}><input disabled={recording || playbackActive || playbackLaunching} type="radio" checked={playbackSettings.mode === 'infinite'} onChange={() => setPlaybackSettings((current) => ({ ...current, mode: 'infinite' }))} />{t('无限循环')}</label>
           {playbackActive && <span className="macro-round-status">{playbackSettings.mode === 'infinite' ? t('第 {{round}} 轮 · 无限循环', { round: displayedRound }) : t('第 {{round}} / {{total}} 轮', { round: displayedRound, total: playbackSettings.repeatCount })}</span>}
         </div>
