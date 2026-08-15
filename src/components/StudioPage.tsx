@@ -126,6 +126,7 @@ export default function StudioPage({ connection, progress, elapsedMs, onNeedCont
     setLaunching(true); setResumeEstimate(null);
     try {
       const result = await window.squidSketch.controller.runMacro(macro.macro, {
+        kind: 'drawing',
         durationMs: macro.durationMs, preparationDurationMs: macro.preparationDurationMs,
         inputCount: macro.inputCount, fileName, startRow, endRow,
         canvasWidth: CANVAS_WIDTH, canvasHeight: CANVAS_HEIGHT,

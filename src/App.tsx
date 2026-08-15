@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SetupPage from './components/SetupPage';
 import ControllerPage from './components/ControllerPage';
 import StudioPage from './components/StudioPage';
@@ -6,6 +6,7 @@ import { LOCALE_OPTIONS, useI18n } from './lib/i18n';
 
 type Page = 'setup' | 'controller' | 'studio';
 type ConnectionState = 'offline' | 'connecting' | 'pairing' | 'connected' | 'error';
+type MacroKind = 'drawing' | 'controller' | null;
 
 const navItems: Array<{ id: Page; label: string; hint: string; icon: string }> = [
   { id: 'setup', label: '准备舱', hint: '环境与蓝牙', icon: '01' },
@@ -21,9 +22,12 @@ export default function App() {
   const [controllerMessage, setControllerMessage] = useState('等待连接');
   const [macroProgress, setMacroProgress] = useState<number | null>(null);
   const [macroElapsedMs, setMacroElapsedMs] = useState<number>(0);
+  const [macroKind, setMacroKind] = useState<MacroKind>(null);
+  const macroKindRef = useRef<MacroKind>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [version, setVersion] = useState('0.2.1');
-  const drawingActive = macroProgress !== null && macroProgress < 1;
+  const [version, setVersion] = useState('0.2.3');
+  const macroActive = macroProgress !== null && macroProgress < 1;
+  const controllerPlaybackActive = macroKind === 'controller' && macroActive;
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -47,12 +51,32 @@ export default function App() {
       if (event.type === 'connecting' || event.type === 'starting') setConnection('connecting');
       if (event.type === 'pairing') setConnection('pairing');
       if (event.type === 'connected') setConnection('connected');
-      if (event.type === 'disconnected') { setConnection('offline'); setControllerMessage('虚拟手柄已断开 · 蓝牙仍由 WSL 接管'); setMacroProgress(null); refreshStatus(); }
-      if (event.type === 'error') { setConnection('error'); setControllerMessage('连接失败'); setToast(tx(event.message || '控制器发生错误')); }
-      if (event.type === 'macro_started') setMacroProgress(0);
+      if (event.type === 'disconnected') { setConnection('offline'); setControllerMessage('虚拟手柄已断开 · 蓝牙仍由 WSL 接管'); setMacroProgress(null); setMacroKind(null); macroKindRef.current = null; refreshStatus(); }
+      if (event.type === 'error') {
+        if (event.code !== 'MACRO_BUSY') { setConnection('error'); setControllerMessage('连接失败'); }
+        setToast(tx(event.message || '控制器发生错误'));
+      }
+      if (event.type === 'macro_started') {
+        const kind: MacroKind = event.metadata?.kind === 'controller-recording' ? 'controller' : 'drawing';
+        macroKindRef.current = kind;
+        setMacroKind(kind);
+        setMacroProgress(0);
+        setMacroElapsedMs(0);
+      }
       if (event.type === 'macro_progress') { setMacroProgress(event.progress ?? 0); setMacroElapsedMs(event.elapsedMs ?? 0); }
-      if (event.type === 'macro_completed') { setMacroProgress(1); setToast(t('涂鸦绘制完成！')); }
-      if (event.type === 'macro_stopped') { setMacroProgress(null); setToast(t('绘制已停止，可以调整起始行后继续')); }
+      if (event.type === 'macro_completed') {
+        const kind = macroKindRef.current;
+        setMacroProgress(1);
+        setToast(t(kind === 'controller' ? '宏回放完成' : '涂鸦绘制完成！'));
+        if (kind === 'controller') { macroKindRef.current = null; setMacroKind(null); }
+      }
+      if (event.type === 'macro_stopped') {
+        const kind = macroKindRef.current;
+        setMacroProgress(null);
+        setMacroKind(null);
+        macroKindRef.current = null;
+        setToast(t(kind === 'controller' ? '宏回放已停止' : '绘制已停止，可以调整起始行后继续'));
+      }
     });
     return () => { offSystem(); offController(); };
   }, [refreshStatus, t, tx]);
@@ -128,16 +152,20 @@ export default function App() {
           <ControllerPage
             connection={connection}
             message={controllerMessage}
-            inputLocked={drawingActive}
+            inputLocked={macroActive}
+            playbackActive={controllerPlaybackActive}
+            playbackProgress={controllerPlaybackActive ? macroProgress : null}
+            playbackElapsedMs={controllerPlaybackActive ? macroElapsedMs : 0}
             onConnect={connectController}
             onDisconnect={disconnectController}
+            notify={setToast}
           />
         )}
         <div className="persisted-page" hidden={page !== 'studio'} aria-hidden={page !== 'studio'}>
           <StudioPage
             connection={connection}
-            progress={macroProgress}
-            elapsedMs={macroElapsedMs}
+            progress={macroKind === 'controller' ? null : macroProgress}
+            elapsedMs={macroKind === 'controller' ? 0 : macroElapsedMs}
             onNeedController={() => setPage('controller')}
             notify={setToast}
           />

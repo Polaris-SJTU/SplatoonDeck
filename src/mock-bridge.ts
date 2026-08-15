@@ -2,6 +2,7 @@ const systemListeners = new Set<(event: Record<string, unknown>) => void>();
 const controllerListeners = new Set<(event: ControllerEvent) => void>();
 let mockMacroTimer: number | null = null;
 let mockMacroProgress = 0;
+let mockMacroElapsedMs = 0;
 
 let attachedBusId: string | null = null;
 const mockAdapter: UsbDevice = {
@@ -57,22 +58,29 @@ if (import.meta.env.DEV && !window.squidSketch) {
       runMacro: async (_macro, metadata) => {
         if (mockMacroTimer !== null) window.clearInterval(mockMacroTimer);
         mockMacroProgress = 0;
+        mockMacroElapsedMs = 0;
+        const startedAt = performance.now();
+        const cycleDurationMs = Math.max(1, Number(metadata.cycleDurationMs) || Number(metadata.durationMs) || 1);
+        const infinite = metadata.repeatMode === 'infinite';
+        const repeatCount = infinite ? Number.POSITIVE_INFINITY : Math.max(1, Number(metadata.repeatCount) || 1);
+        const totalDurationMs = infinite ? cycleDurationMs : cycleDurationMs * repeatCount;
         controllerListeners.forEach((fn) => fn({ type: 'macro_started', metadata }));
         mockMacroTimer = window.setInterval(() => {
-          mockMacroProgress += .01;
-          controllerListeners.forEach((fn) => fn({ type: mockMacroProgress >= 1 ? 'macro_completed' : 'macro_progress', progress: Math.min(1, mockMacroProgress) }));
+          mockMacroElapsedMs = Math.max(0, performance.now() - startedAt);
+          mockMacroProgress = infinite ? (mockMacroElapsedMs % cycleDurationMs) / cycleDurationMs : mockMacroElapsedMs / totalDurationMs;
+          controllerListeners.forEach((fn) => fn({ type: !infinite && mockMacroProgress >= 1 ? 'macro_completed' : 'macro_progress', progress: Math.min(1, mockMacroProgress), elapsedMs: Math.round(mockMacroElapsedMs) }));
           if (mockMacroProgress >= 1 && mockMacroTimer !== null) { window.clearInterval(mockMacroTimer); mockMacroTimer = null; }
-        }, 100);
+        }, 50);
         return { ok: true };
       },
       stopMacro: async () => {
         if (mockMacroTimer !== null) { window.clearInterval(mockMacroTimer); mockMacroTimer = null; }
-        controllerListeners.forEach((fn) => fn({ type: 'macro_stopped', progress: mockMacroProgress }));
+        controllerListeners.forEach((fn) => fn({ type: 'macro_stopped', progress: mockMacroProgress, elapsedMs: Math.round(mockMacroElapsedMs) }));
         return { ok: true };
       },
       onEvent: (listener) => { controllerListeners.add(listener); return () => controllerListeners.delete(listener); }
     },
-    app: { version: async () => '0.2.1-preview' }
+    app: { version: async () => '0.2.3-preview' }
   };
 }
 

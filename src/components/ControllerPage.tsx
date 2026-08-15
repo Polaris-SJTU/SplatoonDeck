@@ -1,4 +1,4 @@
-import { createContext, PointerEvent as ReactPointerEvent, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   assignBinding,
@@ -16,32 +16,56 @@ import {
   MouseMotionSettings,
   resolveBinding
 } from '../lib/controller-mapping';
+import {
+  buildControllerPlayback,
+  finalizeControllerRecording,
+  loadControllerPlaybackSettings,
+  loadControllerRecording,
+  RecordedControllerEvent,
+  RecordedControllerMacro,
+  ControllerPlaybackSettings
+} from '../lib/controller-macro';
 import { useI18n } from '../lib/i18n';
 
 type Props = {
   connection: 'offline' | 'connecting' | 'pairing' | 'connected' | 'error';
   message: string;
   inputLocked: boolean;
+  playbackActive: boolean;
+  playbackProgress: number | null;
+  playbackElapsedMs: number;
   onConnect(): Promise<void>;
   onDisconnect(): Promise<void>;
+  notify(message: string): void;
 };
 
 const BINDINGS_STORAGE_KEY = 'squid-sketch.controller-bindings.v3';
 const LEGACY_BINDINGS_STORAGE_KEY = 'squid-sketch.controller-bindings.v2';
 const MOUSE_MOTION_STORAGE_KEY = 'squid-sketch.mouse-motion.v3';
 const LEGACY_MOUSE_MOTION_STORAGE_KEY = 'squid-sketch.mouse-motion.v2';
+const CONTROLLER_MACRO_STORAGE_KEY = 'splatoondeck.controller-macro.v1';
+const CONTROLLER_PLAYBACK_STORAGE_KEY = 'splatoondeck.controller-playback.v1';
 const MOUSE_REPORT_INTERVAL_MS = 8;
 const GROUP_ORDER = ['面键', '肩键', '十字键', '系统键', '左摇杆', '右摇杆'] as const;
 const ACTIONS_BY_ID = new Map(CONTROLLER_ACTIONS.map((action) => [action.id, action]));
 const ControllerInputLock = createContext(false);
+type ControllerInputDispatcher = {
+  button(button: string, pressed: boolean): void;
+  stick(stick: 'L_STICK' | 'R_STICK', x: number, y: number): void;
+};
+const ControllerInputDispatch = createContext<ControllerInputDispatcher>({
+  button: () => {},
+  stick: () => {}
+});
 
 function PadButton({ label, command, className = '', accent = '' }: { label: string; command: string; className?: string; accent?: string }) {
   const inputLocked = useContext(ControllerInputLock);
+  const dispatch = useContext(ControllerInputDispatch);
   const [pressed, setPressed] = useState(false);
   const change = (value: boolean) => {
     if (inputLocked) { setPressed(false); return; }
     setPressed(value);
-    window.squidSketch.controller.button(command, value);
+    dispatch.button(command, value);
   };
   useEffect(() => { if (inputLocked) setPressed(false); }, [inputLocked]);
   return (
@@ -56,6 +80,7 @@ function PadButton({ label, command, className = '', accent = '' }: { label: str
 
 function AnalogStick({ side, externalPosition }: { side: 'L' | 'R'; externalPosition?: { x: number; y: number } }) {
   const inputLocked = useContext(ControllerInputLock);
+  const dispatch = useContext(ControllerInputDispatch);
   const base = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -68,12 +93,12 @@ function AnalogStick({ side, externalPosition }: { side: 'L' | 'R'; externalPosi
     const distance = Math.hypot(x, y);
     if (distance > radius) { x *= radius / distance; y *= radius / distance; }
     setPosition({ x, y });
-    window.squidSketch.controller.stick(`${side}_STICK`, Math.round(x / radius * 100), Math.round(-y / radius * 100));
+    dispatch.stick(`${side}_STICK`, Math.round(x / radius * 100), Math.round(-y / radius * 100));
   };
   const release = () => {
     setDragging(false);
     setPosition({ x: 0, y: 0 });
-    window.squidSketch.controller.stick(`${side}_STICK`, 0, 0);
+    dispatch.stick(`${side}_STICK`, 0, 0);
   };
   useEffect(() => {
     if (!inputLocked) return;
@@ -87,7 +112,7 @@ function AnalogStick({ side, externalPosition }: { side: 'L' | 'R'; externalPosi
       aria-disabled={inputLocked}
       onPointerDown={(event) => { if (inputLocked) return; event.currentTarget.setPointerCapture(event.pointerId); setDragging(true); update(event); }}
       onPointerMove={(event) => dragging && update(event)} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={release}
-      onDoubleClick={() => { if (inputLocked) return; window.squidSketch.controller.button(`${side}_STICK_PRESS`, true); setTimeout(() => window.squidSketch.controller.button(`${side}_STICK_PRESS`, false), 90); }}
+      onDoubleClick={() => { if (inputLocked) return; dispatch.button(`${side}_STICK_PRESS`, true); setTimeout(() => dispatch.button(`${side}_STICK_PRESS`, false), 90); }}
     ><div className="analog-ring" /><div className="analog-cap" style={{ transform: `translate(${visualPosition.x}px, ${visualPosition.y}px)` }}><span /></div></div>
   );
 }
@@ -107,7 +132,22 @@ function loadInitialMouseMotion() {
   return loadMouseMotionSettings(localStorage.getItem(MOUSE_MOTION_STORAGE_KEY) ?? localStorage.getItem(LEGACY_MOUSE_MOTION_STORAGE_KEY));
 }
 
-export default function ControllerPage({ connection, message, inputLocked, onConnect, onDisconnect }: Props) {
+function loadInitialControllerMacro() {
+  return loadControllerRecording(localStorage.getItem(CONTROLLER_MACRO_STORAGE_KEY));
+}
+
+function loadInitialPlaybackSettings() {
+  return loadControllerPlaybackSettings(localStorage.getItem(CONTROLLER_PLAYBACK_STORAGE_KEY));
+}
+
+type ActiveRecorder = {
+  startedAt: number;
+  events: RecordedControllerEvent[];
+  buttons: Map<string, boolean>;
+  sticks: Record<'L_STICK' | 'R_STICK', { x: number; y: number }>;
+};
+
+export default function ControllerPage({ connection, message, inputLocked, playbackActive, playbackProgress, playbackElapsedMs, onConnect, onDisconnect, notify }: Props) {
   const { locale, t, tx } = useI18n();
   const connected = connection === 'connected';
   const connectionBusy = connection === 'connecting' || connection === 'pairing';
@@ -119,6 +159,44 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
   const [capturing, setCapturing] = useState<{ actionId: ControllerActionId; device: InputDevice } | null>(null);
   const [mouseLocked, setMouseLocked] = useState(false);
   const [mouseVector, setMouseVector] = useState({ x: 0, y: 0 });
+  const [recording, setRecording] = useState(false);
+  const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
+  const [recordingEventCount, setRecordingEventCount] = useState(0);
+  const [recordedMacro, setRecordedMacro] = useState<RecordedControllerMacro | null>(loadInitialControllerMacro);
+  const [playbackSettings, setPlaybackSettings] = useState<ControllerPlaybackSettings>(loadInitialPlaybackSettings);
+  const [playbackLaunching, setPlaybackLaunching] = useState(false);
+  const recorderRef = useRef<ActiveRecorder | null>(null);
+
+  const recordButton = useCallback((button: string, pressed: boolean) => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    const previous = recorder.buttons.get(button) ?? false;
+    if (previous === pressed) return;
+    recorder.buttons.set(button, pressed);
+    recorder.events.push({ atMs: Math.max(0, Math.round(performance.now() - recorder.startedAt)), type: 'button', button, pressed });
+  }, []);
+
+  const recordStick = useCallback((stick: 'L_STICK' | 'R_STICK', x: number, y: number) => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    const next = { x: Math.max(-100, Math.min(100, Math.round(x))), y: Math.max(-100, Math.min(100, Math.round(y))) };
+    const previous = recorder.sticks[stick];
+    if (previous.x === next.x && previous.y === next.y) return;
+    recorder.sticks[stick] = next;
+    recorder.events.push({ atMs: Math.max(0, Math.round(performance.now() - recorder.startedAt)), type: 'stick', stick, ...next });
+  }, []);
+
+  const sendButton = useCallback((button: string, pressed: boolean) => {
+    window.squidSketch.controller.button(button, pressed);
+    recordButton(button, pressed);
+  }, [recordButton]);
+
+  const sendStick = useCallback((stick: 'L_STICK' | 'R_STICK', x: number, y: number) => {
+    window.squidSketch.controller.stick(stick, x, y);
+    recordStick(stick, x, y);
+  }, [recordStick]);
+
+  const inputDispatch = useMemo(() => ({ button: sendButton, stick: sendStick }), [sendButton, sendStick]);
 
   const groupedActions = useMemo(() => GROUP_ORDER.map((group) => ({
     group,
@@ -130,6 +208,100 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
     mouseMotionRef.current = mouseMotion;
     localStorage.setItem(MOUSE_MOTION_STORAGE_KEY, JSON.stringify(mouseMotion));
   }, [mouseMotion]);
+  useEffect(() => localStorage.setItem(CONTROLLER_PLAYBACK_STORAGE_KEY, JSON.stringify(playbackSettings)), [playbackSettings]);
+
+  useEffect(() => {
+    if (!recording) return;
+    const update = () => {
+      const recorder = recorderRef.current;
+      if (!recorder) return;
+      setRecordingElapsedMs(Math.max(0, Math.round(performance.now() - recorder.startedAt)));
+      setRecordingEventCount(recorder.events.length);
+    };
+    update();
+    const timer = window.setInterval(update, 100);
+    return () => window.clearInterval(timer);
+  }, [recording]);
+
+  useEffect(() => () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    const macro = finalizeControllerRecording(recorder.events, performance.now() - recorder.startedAt);
+    if (macro) localStorage.setItem(CONTROLLER_MACRO_STORAGE_KEY, JSON.stringify(macro));
+    recorderRef.current = null;
+  }, []);
+
+  const startRecording = () => {
+    if (!connected) { notify(t('请先连接虚拟 Pro Controller')); return; }
+    if (inputLocked || playbackLaunching) return;
+    recorderRef.current = {
+      startedAt: performance.now(),
+      events: [],
+      buttons: new Map(),
+      sticks: { L_STICK: { x: 0, y: 0 }, R_STICK: { x: 0, y: 0 } }
+    };
+    setRecordingElapsedMs(0);
+    setRecordingEventCount(0);
+    setRecording(true);
+  };
+
+  const stopRecording = () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    const macro = finalizeControllerRecording(recorder.events, performance.now() - recorder.startedAt);
+    recorderRef.current = null;
+    setRecording(false);
+    if (!macro) { notify(t('没有记录到手柄操作')); return; }
+    setRecordedMacro(macro);
+    setRecordingElapsedMs(macro.durationMs);
+    setRecordingEventCount(macro.events.length);
+    localStorage.setItem(CONTROLLER_MACRO_STORAGE_KEY, JSON.stringify(macro));
+    notify(t('录制已保存'));
+  };
+
+  const clearRecording = () => {
+    if (recording || playbackActive || playbackLaunching) return;
+    setRecordedMacro(null);
+    setRecordingElapsedMs(0);
+    setRecordingEventCount(0);
+    localStorage.removeItem(CONTROLLER_MACRO_STORAGE_KEY);
+    notify(t('录制内容已清空'));
+  };
+
+  const startPlayback = async () => {
+    if (!connected) { notify(t('请先连接虚拟 Pro Controller')); return; }
+    if (!recordedMacro) { notify(t('没有可回放的录制内容')); return; }
+    if (inputLocked || recording || playbackLaunching) return;
+    const playback = buildControllerPlayback(recordedMacro);
+    if (!playback.macro) { notify(t('没有可回放的录制内容')); return; }
+    if (document.pointerLockElement) document.exitPointerLock();
+    setPlaybackLaunching(true);
+    try {
+      const result = await window.squidSketch.controller.runMacro(playback.macro, {
+        kind: 'controller-recording',
+        durationMs: playbackSettings.mode === 'count' ? playback.durationMs * playbackSettings.repeatCount : playback.durationMs,
+        cycleDurationMs: playback.durationMs,
+        repeatMode: playbackSettings.mode,
+        repeatCount: playbackSettings.mode === 'count' ? playbackSettings.repeatCount : 0,
+        inputCount: playback.inputCount,
+        createdAt: recordedMacro.createdAt
+      });
+      if (!result.ok) notify(t('宏回放启动失败'));
+    } catch (error) {
+      notify(tx(error instanceof Error ? error.message : String(error)));
+    } finally {
+      setPlaybackLaunching(false);
+    }
+  };
+
+  const stopPlayback = async () => {
+    try {
+      const result = await window.squidSketch.controller.stopMacro();
+      if (!result.ok) notify(t('宏回放停止失败'));
+    } catch (error) {
+      notify(tx(error instanceof Error ? error.message : String(error)));
+    }
+  };
 
   const changeBinding = (actionId: ControllerActionId, device: InputDevice, value: string | number | null) => {
     setBindings((current) => assignBinding(current, actionId, device, value));
@@ -184,7 +356,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       const directions = stickDirections[stick];
       const digitalX = (directions.has('RIGHT') ? 100 : 0) - (directions.has('LEFT') ? 100 : 0);
       const digitalY = (directions.has('UP') ? 100 : 0) - (directions.has('DOWN') ? 100 : 0);
-      window.squidSketch.controller.stick(stick, clamp(digitalX + motion[stick].x), clamp(digitalY + motion[stick].y));
+      sendStick(stick, clamp(digitalX + motion[stick].x), clamp(digitalY + motion[stick].y));
     };
     const setAction = (actionId: ControllerActionId, pressed: boolean, source: string) => {
       const action = ACTIONS_BY_ID.get(actionId)!;
@@ -194,7 +366,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       if (pressed) sources.add(source); else sources.delete(source);
       const isPressed = sources.size > 0;
       if (wasPressed === isPressed) return;
-      if (action.kind === 'button') window.squidSketch.controller.button(actionId, isPressed);
+      if (action.kind === 'button') sendButton(actionId, isPressed);
       else if (action.stick && action.axis) {
         if (isPressed) stickDirections[action.stick].add(action.axis);
         else stickDirections[action.stick].delete(action.axis);
@@ -215,8 +387,8 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       stickDirections.L_STICK.clear(); stickDirections.R_STICK.clear();
       motion.L_STICK = { x: 0, y: 0 }; motion.R_STICK = { x: 0, y: 0 };
       setMouseVector({ x: 0, y: 0 });
-      window.squidSketch.controller.stick('L_STICK', 0, 0);
-      window.squidSketch.controller.stick('R_STICK', 0, 0);
+      sendStick('L_STICK', 0, 0);
+      sendStick('R_STICK', 0, 0);
       if (motionTimer !== null) window.clearTimeout(motionTimer);
       if (displayTimer !== null) window.clearTimeout(displayTimer);
       if (motionFlushTimer !== null) window.clearTimeout(motionFlushTimer);
@@ -314,14 +486,14 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
       window.removeEventListener('contextmenu', contextmenu); window.removeEventListener('blur', releaseAll);
       document.removeEventListener('pointerlockchange', pointerLockChange); document.removeEventListener('visibilitychange', visibility);
     };
-  }, [bindings, capturing, connected, inputLocked, mappingOpen]);
+  }, [bindings, capturing, connected, inputLocked, mappingOpen, sendButton, sendStick]);
 
   useEffect(() => {
     if (inputLocked && document.pointerLockElement) document.exitPointerLock();
   }, [inputLocked]);
 
   const openMapping = () => {
-    if (inputLocked) return;
+    if (inputLocked || recording) return;
     if (document.pointerLockElement) document.exitPointerLock();
     setCapturing(null); setMappingOpen(true);
   };
@@ -348,19 +520,33 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
     const binding = bindings[actionId];
     return binding.keyboard ? formatKeyboardCode(binding.keyboard, locale) : formatMouseButton(binding.mouse, locale);
   };
+  const visibleEvents = recording ? recorderRef.current?.events ?? [] : recordedMacro?.events ?? [];
+  const displayedDurationMs = recording ? recordingElapsedMs : recordedMacro?.durationMs ?? 0;
+  const displayedEventCount = recording ? recordingEventCount : recordedMacro?.events.length ?? 0;
+  const playbackCycleMs = recordedMacro ? buildControllerPlayback(recordedMacro).durationMs : 0;
+  const playbackRound = playbackCycleMs > 0 ? Math.floor(playbackElapsedMs / playbackCycleMs) + 1 : 1;
+  const displayedRound = playbackSettings.mode === 'count' ? Math.min(playbackSettings.repeatCount, playbackRound) : playbackRound;
+  const eventPreview = visibleEvents.slice(-10);
+  const timelineEvents = visibleEvents.length <= 80
+    ? visibleEvents
+    : visibleEvents.filter((_, index) => index % Math.ceil(visibleEvents.length / 80) === 0);
+  const describeEvent = (event: RecordedControllerEvent) => event.type === 'button'
+    ? `${event.button} ${t(event.pressed ? '按下' : '松开')}`
+    : `${t(event.stick === 'L_STICK' ? '左摇杆' : '右摇杆')} ${event.x}, ${event.y}`;
+  const statusKey = recording ? '录制中' : playbackActive ? '回放中' : recordedMacro ? '已录制' : '尚未录制宏';
 
   return (
     <section className="page controller-page">
       <header className="page-header compact">
         <div><span className="eyebrow">TAKE CONTROL</span><h1>{t('虚拟 ')}<span>Pro Controller</span></h1><p>{t('鼠标、触控和键盘都能操作；双击摇杆可按下 L3 / R3。')}</p></div>
         <div className="controller-header-actions">
-          <button disabled={inputLocked} className="ghost-button mapping-open-button" onClick={openMapping}>⌨ {t('自定义映射')}</button>
+          <button disabled={inputLocked || recording} className="ghost-button mapping-open-button" onClick={openMapping}>⌨ {t('自定义映射')}</button>
           {mouseMotion.target !== 'off' && <button className={`ghost-button mouse-control-button ${mouseLocked ? 'active' : ''}`} onClick={toggleMouseControl} disabled={!connected || inputLocked}>{mouseLocked ? t('鼠标控制中 · Esc 退出') : t('启用鼠标 → {{stick}}', { stick: t(mouseMotion.target === 'L_STICK' ? '左摇杆' : '右摇杆') })}</button>}
-          {mouseMotion.target !== 'off' && <div className="mouse-sensitivity-quick"><span>{t('横向')}</span><input aria-label={t('鼠标横向灵敏度')} disabled={inputLocked} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityX} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityX: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityX.toFixed(1)}</b><span>{t('纵向')}</span><input aria-label={t('鼠标纵向灵敏度')} disabled={inputLocked} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityY} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityY: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityY.toFixed(1)}</b></div>}
+          {mouseMotion.target !== 'off' && <div className="mouse-sensitivity-quick"><span>{t('横向')}</span><input aria-label={t('鼠标横向灵敏度')} disabled={inputLocked || recording} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityX} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityX: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityX.toFixed(1)}</b><span>{t('纵向')}</span><input aria-label={t('鼠标纵向灵敏度')} disabled={inputLocked || recording} type="range" min="0.5" max="10" step="0.5" value={mouseMotion.sensitivityY} onChange={(event) => setMouseMotion((current) => ({ ...current, sensitivityY: Number(event.target.value) }))} /><b>{mouseMotion.sensitivityY.toFixed(1)}</b></div>}
           <button
             className={`connect-button ${connected ? 'ghost-button danger' : 'primary-button lime'}`}
             onClick={connected ? onDisconnect : onConnect}
-            disabled={inputLocked || connectionBusy}
+            disabled={inputLocked || recording || connectionBusy}
           >
             {!connected && (connectionBusy ? <i className="spinner" /> : 'ᛒ')}{' '}
             {t(connected ? '断开连接' : connection === 'pairing' ? '等待 Switch 2 配对' : connection === 'connecting' ? '正在连接 Switch 2' : '连接 Switch 2')}
@@ -368,7 +554,7 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
         </div>
       </header>
 
-      <ControllerInputLock.Provider value={inputLocked}><div ref={stageRef} className={`controller-stage ${connected ? 'live' : ''} ${mouseLocked ? 'mouse-locked' : ''} ${inputLocked ? 'input-locked' : ''}`}>
+      <ControllerInputDispatch.Provider value={inputDispatch}><ControllerInputLock.Provider value={inputLocked}><div ref={stageRef} className={`controller-stage ${connected ? 'live' : ''} ${mouseLocked ? 'mouse-locked' : ''} ${inputLocked ? 'input-locked' : ''}`}>
         <div className="stage-grid" />
         <div className="controller-shadow" />
         <div className="pro-controller">
@@ -405,9 +591,9 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
           </div>
         </div>
         {mouseLocked && <div className="mouse-lock-hud"><strong>{t('鼠标正在控制{{stick}}', { stick: t(mouseMotion.target === 'L_STICK' ? '左摇杆' : '右摇杆') })}</strong><span>X {Math.round(mouseVector.x)} · Y {Math.round(mouseVector.y)} · {t('Esc 退出')}</span></div>}
-        {inputLocked && <div className="controller-lock-notice"><strong>{t('自动绘制进行中')}</strong><span>{t('手柄输入已锁定，请在涂鸦工坊停止绘制后操作')}</span></div>}
+        {inputLocked && <div className="controller-lock-notice"><strong>{t(playbackActive ? '宏回放进行中' : '自动绘制进行中')}</strong><span>{t(playbackActive ? '正在按录制节奏执行，手柄输入已锁定' : '手柄输入已锁定，请在涂鸦工坊停止绘制后操作')}</span></div>}
         <div className={`controller-state-card ${connection}`}><i /><div><strong>{connected ? 'LIVE INPUT' : connection === 'pairing' ? 'PAIRING' : 'STANDBY'}</strong><span>{tx(message)}</span></div></div>
-      </div></ControllerInputLock.Provider>
+      </div></ControllerInputLock.Provider></ControllerInputDispatch.Provider>
 
       <div className="key-guide">
         <span><kbd>1 2 3 4</kbd> {t('十字键')}</span>
@@ -417,8 +603,56 @@ export default function ControllerPage({ connection, message, inputLocked, onCon
         <span><kbd>{bindingHint('L')} / {bindingHint('ZL')}</kbd> L / ZL</span>
         <span><kbd>{bindingHint('R')} / {bindingHint('ZR')}</kbd> R / ZR</span>
         <span><kbd>{t('鼠标移动')}</kbd> {t('右摇杆')}</span>
-        <button disabled={inputLocked} className="key-guide-edit" onClick={openMapping}>{t('编辑全部映射 →')}</button>
+        <button disabled={inputLocked || recording} className="key-guide-edit" onClick={openMapping}>{t('编辑全部映射 →')}</button>
       </div>
+
+      <section className={`controller-macro-panel ${recording ? 'recording' : ''} ${playbackActive ? 'playing' : ''}`}>
+        <div className="macro-panel-copy">
+          <div><span className="step-kicker">ACTION REPLAY</span><h2>{t('宏录制与回放')}</h2></div>
+          <p>{t('记录按键、摇杆和操作间隔，之后按原始节奏重新执行。')}</p>
+          <span className={`macro-status ${recording ? 'recording' : playbackActive ? 'playing' : recordedMacro ? 'ready' : ''}`}><i />{t(statusKey)}</span>
+        </div>
+
+        <div className="macro-summary">
+          <span>{t('持续时间')}<strong>{t('{{seconds}} 秒', { seconds: (displayedDurationMs / 1000).toFixed(1) })}</strong></span>
+          <span>{t('事件')}<strong>{displayedEventCount.toLocaleString(locale)}</strong></span>
+          <span>{t('保存位置')}<strong>{t('仅保存在本机')}</strong></span>
+        </div>
+
+        <div className="macro-timeline-wrap">
+          <div className="macro-timeline-label"><span>{t('事件时间线')}</span><b>{recording ? '● REC' : playbackActive ? `▶ ${t('第 {{round}} 轮', { round: displayedRound })}` : ''}</b></div>
+          <div className="macro-timeline">
+            {timelineEvents.map((event, index) => <i
+              key={`${event.atMs}-${index}`}
+              className={event.type}
+              style={{ left: `${displayedDurationMs > 0 ? Math.min(100, event.atMs / displayedDurationMs * 100) : 0}%` }}
+              title={`${(event.atMs / 1000).toFixed(2)}s · ${describeEvent(event)}`}
+            />)}
+            {playbackActive && <em style={{ left: `${Math.max(0, Math.min(100, (playbackProgress ?? 0) * 100))}%` }} />}
+          </div>
+          <div className="macro-event-strip">
+            {eventPreview.length ? eventPreview.map((event, index) => <span key={`${event.atMs}-${index}`}><time>{(event.atMs / 1000).toFixed(2)}s</time>{describeEvent(event)}</span>) : <small>{t('录制会捕获屏幕手柄、键盘、鼠标按键和鼠标移动。')}</small>}
+          </div>
+        </div>
+
+        <div className="macro-playback-config">
+          <strong>{t('回放方式')}</strong>
+          <label className={playbackSettings.mode === 'count' ? 'active' : ''}><input disabled={recording || playbackActive || playbackLaunching} type="radio" checked={playbackSettings.mode === 'count'} onChange={() => setPlaybackSettings((current) => ({ ...current, mode: 'count' }))} />{t('指定次数')}</label>
+          <label className="macro-repeat-count"><input aria-label={t('回放次数')} disabled={recording || playbackActive || playbackLaunching || playbackSettings.mode !== 'count'} type="number" min="1" max="999" value={playbackSettings.repeatCount} onChange={(event) => setPlaybackSettings((current) => ({ ...current, repeatCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))} /><span>{t('次')}</span></label>
+          <label className={playbackSettings.mode === 'infinite' ? 'active' : ''}><input disabled={recording || playbackActive || playbackLaunching} type="radio" checked={playbackSettings.mode === 'infinite'} onChange={() => setPlaybackSettings((current) => ({ ...current, mode: 'infinite' }))} />{t('无限循环')}</label>
+          {playbackActive && <span className="macro-round-status">{playbackSettings.mode === 'infinite' ? t('第 {{round}} 轮 · 无限循环', { round: displayedRound }) : t('第 {{round}} / {{total}} 轮', { round: displayedRound, total: playbackSettings.repeatCount })}</span>}
+        </div>
+
+        <div className="macro-actions">
+          {recording
+            ? <button className="primary-button hot-pink" onClick={stopRecording}>■ {t('停止录制')}</button>
+            : <button className="ghost-button macro-record-button" disabled={!connected || inputLocked || playbackLaunching} onClick={startRecording}>● {t('开始录制')}</button>}
+          {playbackActive
+            ? <button className="primary-button hot-pink" onClick={stopPlayback}>■ {t('停止回放')}</button>
+            : <button className="primary-button lime" disabled={!connected || !recordedMacro || recording || inputLocked || playbackLaunching} onClick={startPlayback}>{playbackLaunching ? <i className="spinner" /> : '▶'} {t(playbackLaunching ? '正在启动回放…' : '回放')}</button>}
+          <button className="ghost-button" disabled={!recordedMacro || recording || playbackActive || playbackLaunching} onClick={clearRecording}>{t('清空')}</button>
+        </div>
+      </section>
 
       {mappingOpen && createPortal(<div className="mapping-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) closeMapping(); }}>
         <div className="mapping-dialog" role="dialog" aria-modal="true" aria-labelledby="mapping-title">

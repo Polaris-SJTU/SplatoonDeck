@@ -19,6 +19,34 @@ import traceback
 
 
 NXBT_REPORT_PATCH_MARKER = "SplatoonDeck full-state report cadence"
+MAX_MACRO_REPEAT_COUNT = 999
+
+
+def _positive_int(value: object, default: int, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = default
+    parsed = max(1, parsed)
+    return min(maximum, parsed) if maximum is not None else parsed
+
+
+def macro_playback_policy(metadata: object) -> tuple[int, int | None, int]:
+    """Return one-cycle duration, repeat count, and progress duration.
+
+    A ``None`` repeat count represents replay-until-stopped.  Drawing macros
+    and older clients omit the repeat fields and therefore run exactly once.
+    """
+    values = metadata if isinstance(metadata, dict) else {}
+    cycle_duration = _positive_int(values.get("cycleDurationMs", values.get("durationMs", 1)), 1)
+    if values.get("repeatMode") == "infinite":
+        return cycle_duration, None, cycle_duration
+    repeat_count = _positive_int(values.get("repeatCount", 1), 1, MAX_MACRO_REPEAT_COUNT)
+    return cycle_duration, repeat_count, cycle_duration * repeat_count
+
+
+def should_repeat_macro(repeat_count: int | None, completed_cycles: int) -> bool:
+    return repeat_count is None or completed_cycles < repeat_count
 
 
 def _replace_file(path: Path, source: str) -> None:
@@ -198,8 +226,13 @@ def main() -> int:
         sticks = {"L_STICK": (0, 0), "R_STICK": (0, 0)}
         dirty_release = False
         active_macro = None
+        active_macro_source = ""
         macro_started = 0.0
+        macro_cycle_started = 0.0
         macro_duration = 0
+        macro_cycle_duration = 0
+        macro_repeat_count: int | None = 1
+        macro_repeat_index = 0
         stop_requested = False
         next_tick = time.perf_counter()
 
@@ -228,16 +261,19 @@ def main() -> int:
                         dirty_release = True
                 elif kind == "macro":
                     if active_macro:
-                        emit("error", message="已有绘制任务正在运行", code="MACRO_BUSY")
+                        emit("error", message="已有宏任务正在运行", code="MACRO_BUSY")
                     else:
                         buttons.clear()
                         sticks = {"L_STICK": (0, 0), "R_STICK": (0, 0)}
                         nx.set_controller_input(controller_index, active_packet(nx, buttons, sticks))
-                        active_macro = nx.macro(controller_index, str(command.get("macro", "")), block=False)
+                        active_macro_source = str(command.get("macro", ""))
+                        active_macro = nx.macro(controller_index, active_macro_source, block=False)
                         macro_started = time.monotonic()
+                        macro_cycle_started = macro_started
                         stop_requested = False
                         metadata = command.get("metadata") or {}
-                        macro_duration = max(1, int(metadata.get("durationMs", 1)))
+                        macro_cycle_duration, macro_repeat_count, macro_duration = macro_playback_policy(metadata)
+                        macro_repeat_index = 0
                         emit("macro_started", macroId=active_macro, metadata=metadata)
                 elif kind == "stop_macro" and active_macro:
                     nx.stop_macro(controller_index, active_macro, block=False)
@@ -247,12 +283,25 @@ def main() -> int:
             if active_macro:
                 finished = nx.state[controller_index]["finished_macros"]
                 if active_macro in finished:
-                    emit("macro_stopped" if stop_requested else "macro_completed", macroId=active_macro)
-                    active_macro = None
-                    stop_requested = False
+                    macro_repeat_index += 1
+                    if stop_requested:
+                        emit("macro_stopped", macroId=active_macro)
+                        active_macro = None
+                        stop_requested = False
+                    elif should_repeat_macro(macro_repeat_count, macro_repeat_index):
+                        active_macro = nx.macro(controller_index, active_macro_source, block=False)
+                        macro_cycle_started = time.monotonic()
+                    else:
+                        emit("macro_completed", macroId=active_macro)
+                        active_macro = None
                 else:
                     elapsed = int((time.monotonic() - macro_started) * 1000)
-                    emit("macro_progress", progress=min(0.995, elapsed / macro_duration), elapsedMs=elapsed)
+                    if macro_repeat_count is None:
+                        cycle_elapsed = int((time.monotonic() - macro_cycle_started) * 1000)
+                        progress = min(0.995, cycle_elapsed / macro_cycle_duration)
+                    else:
+                        progress = min(0.995, elapsed / macro_duration)
+                    emit("macro_progress", progress=progress, elapsedMs=elapsed, repeatIndex=macro_repeat_index + 1)
                     time.sleep(0.05)
                     continue
 

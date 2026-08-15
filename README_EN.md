@@ -59,6 +59,14 @@ Keep using SplatoonDeck to control the game after connecting. Enabling another p
 - Select **Custom Mapping** to change keyboard keys, mouse buttons, and mouse-motion assignments.
 - Every button, the D-pad, and both sticks can also be clicked or dragged directly on screen.
 
+### Record and repeat a control sequence
+
+1. Connect to Switch 2, then find **Macro Recording & Playback** at the bottom of the Virtual Controller page.
+2. Select **Start Recording** and perform the sequence once with the on-screen controller, keyboard, or mouse. Button states, stick positions, and timing are recorded.
+3. Select **Stop Recording** to save it locally. The recording remains available after restarting the app.
+4. Choose a repeat count or **Loop Until Stopped**, then select **Play**. SplatoonDeck replays every action at its original pace.
+5. Select **Stop Playback** at any time to end a long or infinite loop. Other controller input stays locked during playback.
+
 ### Draw an image in Splatoon 3
 
 1. In Splatoon 3, enter the horizontal post-drawing canvas and leave it ready for drawing.
@@ -99,6 +107,7 @@ Import an image, tune its monochrome pixel treatment, preview the `320 × 120` g
 - Keyboard, mouse buttons, mouse movement, and touch input.
 - Fully customizable mappings.
 - Independent horizontal and vertical mouse sensitivity.
+- Timed button and stick macro recording with a fixed repeat count or playback until manually stopped.
 - Complete game control after connecting, without switching back and forth to a physical controller.
 
 ### Draw images automatically in the game
