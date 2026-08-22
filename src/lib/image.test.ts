@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createCalibrationPixels, ditherLuminance, estimateScanCost, formatDuration, generateMacro, getDrawPath, pixelChecksum, resolveScanDirection, transformLuminance } from './image';
 
 function simulateDrawing(macro: string, width: number, height: number, _startBand: number, direction: 'row' | 'column' = 'row') {
@@ -281,7 +281,7 @@ describe('image pipeline', () => {
     expect(optimized.macro).not.toContain('DPAD_LEFT');
     expect(optimized.macro).not.toContain('DPAD_RIGHT');
     // Two wall calibrations are far faster than crossing all 319 columns.
-    expect(optimized.durationMs).toBeLessThan(15_000);
+    expect(optimized.durationMs).toBeLessThan(16_000);
     expect([...simulateDrawing(optimized.macro, 320, 1, 0)]).toEqual([...pixels]);
   });
 
@@ -309,6 +309,24 @@ describe('image pipeline', () => {
     expect(firstStickIdx).toBeLessThan(firstAIdx);
     // Round-trip still matches
     expect([...simulateDrawing(result.macro, 4, 2, 0)]).toEqual([...pixels]);
+  });
+
+  it('uses a longer horizontal home and a smaller vertical safety increase', () => {
+    const rowPixels = new Uint8Array([1, 0, 0, 1]);
+    const row = generateMacro(rowPixels, 4, 1, {
+      pressDurationMs: 45, autoSave: false, scanDirection: 'row'
+    });
+    expect(row.macro).toContain('L_STICK@-100+000 3.5s');
+    expect(row.macro).toContain('L_STICK@+000+100 2.8s');
+
+    const columnPixels = new Uint8Array(2 * 4);
+    columnPixels[0] = 1;
+    columnPixels[3 * 2] = 1;
+    const column = generateMacro(columnPixels, 2, 4, {
+      pressDurationMs: 45, autoSave: false, scanDirection: 'column'
+    });
+    expect(column.macro).toContain('L_STICK@+000+100 2.8s');
+    expect(column.macro).not.toContain('L_STICK@+000+100 3.5s');
   });
 
   it('emits stick boundary reset before each content column in column scan', () => {

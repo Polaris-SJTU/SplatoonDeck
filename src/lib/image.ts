@@ -58,6 +58,12 @@ const STICK_RIGHT = 'L_STICK@+100+000';
 const STICK_UP = 'L_STICK@+000+100';
 const STICK_DOWN = 'L_STICK@+000-100';
 const STICK_CENTER = 'L_STICK@+000+000';
+// Horizontal homing has to cross up to 319 pixels, while vertical homing only
+// crosses 119. Keep independent safety margins so a slow frame or Bluetooth
+// report cannot leave the next row/column anchored one pixel short.
+const ROW_HOME_HOLD_MS = 3500;
+const COLUMN_HOME_HOLD_MS = 2800;
+const HOME_SETTLE_MS = 150;
 // NXBT treats a duration-only macro line as a passive wait: it does not
 // update the HID report, so the previous button remains held.  Every release
 // and delay must therefore send an explicit all-neutral controller state.
@@ -346,7 +352,7 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
     lines.push(`${stickSpec} ${sec(ms)}s`);
     inputCount += 1;
     totalMs += nxbtMs(ms);
-    const settleMs = Math.max(100, moveReleaseMs * 2);
+    const settleMs = Math.max(HOME_SETTLE_MS, moveReleaseMs * 2);
     lines.push(`${STICK_CENTER} ${sec(settleMs)}s`);
     inputCount += 1;
     totalMs += nxbtMs(settleMs);
@@ -361,8 +367,8 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   // Slam cursor to top-left corner using stick wall-bounce. Faster and
   // more reliable than hundreds of D-pad taps — the cursor slides to the
   // edge and stops automatically, guaranteeing position (0, 0).
-  stickHold(STICK_LEFT, 2500);
-  stickHold(STICK_UP, 2500);
+  stickHold(STICK_LEFT, ROW_HOME_HOLD_MS);
+  stickHold(STICK_UP, COLUMN_HOME_HOLD_MS);
   if (scanDirection === 'row') {
     loopTap('DPAD_DOWN', startBand);
   } else {
@@ -395,7 +401,7 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
         continue;
       }
       for (const segment of plan.segments) {
-        stickHold(segment.edge === 'start' ? STICK_LEFT : STICK_RIGHT, 2500);
+        stickHold(segment.edge === 'start' ? STICK_LEFT : STICK_RIGHT, ROW_HOME_HOLD_MS);
         let currentX = segment.edge === 'start' ? 0 : width - 1;
         for (const targetX of segment.positions) {
           currentX = moveX(currentX, targetX);
@@ -419,7 +425,7 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
         continue;
       }
       for (const segment of plan.segments) {
-        stickHold(segment.edge === 'start' ? STICK_UP : STICK_DOWN, 2500);
+        stickHold(segment.edge === 'start' ? STICK_UP : STICK_DOWN, COLUMN_HOME_HOLD_MS);
         let currentY = segment.edge === 'start' ? 0 : height - 1;
         for (const targetY of segment.positions) {
           currentY = moveY(currentY, targetY);
