@@ -52,7 +52,12 @@ app.whenReady().then(() => {
   ipcMain.handle('system:get-status', () => system.getStatus());
   ipcMain.handle('system:diagnose', () => system.diagnose());
   ipcMain.handle('system:install', () => system.install());
-  ipcMain.handle('system:uninstall', async () => { await controller.disconnect(); await system.releaseBluetooth(); return system.uninstall(); });
+  ipcMain.handle('system:uninstall', async () => {
+    try { await controller.disconnect(); } catch { }
+    try { await system.releaseBluetooth(); } catch { }
+    return system.uninstall();
+  });
+  ipcMain.handle('system:restart-windows', () => system.restartWindows());
   ipcMain.handle('system:attach-bluetooth', (_e, busId) => system.attachBluetooth(busId));
   ipcMain.handle('system:release-bluetooth', async () => { await controller.disconnect(); return system.releaseBluetooth(); });
   ipcMain.handle('controller:connect', (_e, options) => controller.connect(options));

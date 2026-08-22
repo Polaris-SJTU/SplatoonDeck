@@ -70,6 +70,10 @@ function isWslUnavailable(detail = '') {
   return /not enabled|is disabled|cannot start|not supported with your current|未启用|无法启动|当前计算机配置不支持|有効になっていません|無効になっています|起動できません|現在のコンピューター構成ではサポートされていません/i.test(detail);
 }
 
+function isApplicationControlBlocked(detail = '') {
+  return /application control policy|app control policy|smart app control|应用程序控制策略|智能应用控制|アプリ制御ポリシー|spawn(?:Sync)?[^\r\n]*\bUNKNOWN\b/i.test(detail);
+}
+
 function restartStillPending(marker, markerModifiedAt, bootedAt) {
   if (!marker?.restartRequired) return false;
   if (!Number.isFinite(markerModifiedAt) || !Number.isFinite(bootedAt)) return true;
@@ -78,6 +82,30 @@ function restartStillPending(marker, markerModifiedAt, bootedAt) {
 
 function hasInstalledEnvironment(marker) {
   return Boolean(marker?.lifecycle === 'installed' && marker?.completed !== false);
+}
+
+function setupProgressFromMarker(marker) {
+  if (!marker || !['install', 'uninstall'].includes(marker.operation)) return null;
+  return {
+    operation: marker.operation,
+    operationId: String(marker.operationId || ''),
+    lifecycle: String(marker.lifecycle || ''),
+    phase: String(marker.phase || ''),
+    stageIndex: Number(marker.stageIndex) || 0,
+    stageTotal: Number(marker.stageTotal) || 0,
+    stageStatus: String(marker.stageStatus || ''),
+    stageTitle: String(marker.stageTitle || ''),
+    stageDetail: String(marker.stageDetail || ''),
+    nextTitle: String(marker.nextTitle || ''),
+    progressPercent: Math.max(0, Math.min(100, Number(marker.progressPercent) || 0)),
+    errorCode: marker.errorCode ? String(marker.errorCode) : null,
+    errorMessage: marker.errorMessage ? String(marker.errorMessage) : null,
+    retryable: Boolean(marker.retryable),
+    awaitingUserConfirmation: Boolean(marker.awaitingUserConfirmation),
+    restartRequired: Boolean(marker.restartRequired),
+    restartReason: marker.restartRequired ? String(marker.restartReason || marker.operation) : null,
+    updatedAt: String(marker.updatedAt || '')
+  };
 }
 
 function parseUsbipdState(output) {
@@ -141,6 +169,7 @@ class SystemManager {
     const existingSession = this.readSession();
     this.sessionBusId = existingSession?.busId || null;
     this.recoveredAtStartup = Boolean(existingSession);
+    this.activeSetupAction = null;
   }
 
   get scriptRoot() {
@@ -178,7 +207,7 @@ class SystemManager {
     try { markerModifiedAt = fs.statSync(this.markerPath).mtimeMs; } catch { return marker; }
     const bootedAt = Date.now() - (os.uptime() * 1000);
     if (restartStillPending(marker, markerModifiedAt, bootedAt)) return marker;
-    if (marker.restartReason === 'uninstall' || marker.lifecycle === 'uninstalled') {
+    if (marker.lifecycle === 'uninstalled') {
       try { fs.unlinkSync(this.markerPath); } catch (error) {
         if (error.code !== 'ENOENT') throw error;
       }
@@ -187,6 +216,10 @@ class SystemManager {
     marker.restartRequired = false;
     marker.restartReason = null;
     marker.restartCompletedAt = new Date().toISOString();
+    if (marker.lifecycle === 'installing' && marker.stageStatus === 'restart-required') {
+      marker.stageStatus = 'ready-to-continue';
+      marker.stageDetail = 'Windows restarted. Continue dependency setup from the next stage.';
+    }
     this.writeJson(this.markerPath, marker);
     return marker;
   }
@@ -274,12 +307,14 @@ class SystemManager {
         recoveredSession: Boolean(attachedBusId && this.recoveredAtStartup)
       },
       installMarker: marker,
+      setup: setupProgressFromMarker(marker),
       restartRequired: Boolean(marker?.restartRequired),
       restartReason: marker?.restartRequired ? (marker.restartReason || 'install') : null
     };
   }
 
   async runSetupAction(action) {
+    if (this.activeSetupAction) throw new Error('另一个依赖安装或清理操作仍在进行，请等待它完成。');
     const helper = this.setupHelperExecutable;
     if (!fs.existsSync(helper)) throw new Error(`缺少安装辅助程序：${helper}`);
     const logPath = path.join(this.userDataPath, `${action}-dependencies-${Date.now()}.log`);
@@ -292,18 +327,49 @@ class SystemManager {
       '--linux-setup', linuxSetup,
       '--log', logPath
     ];
-    this.emit({ phase: 'started', message: action === 'uninstall' ? '正在清理应用依赖…' : '正在安装应用依赖…', logPath });
-    const result = await capture(helper, args, { timeout: 30 * 60_000, windowsHide: false });
+    this.activeSetupAction = action;
+    this.emit({ phase: 'started', operation: action, message: action === 'uninstall' ? '正在清理应用依赖…' : '正在安装应用依赖…', logPath });
+    let lastProgress = '';
+    const publishProgress = () => {
+      const setup = setupProgressFromMarker(this.readMarker());
+      if (!setup || setup.operation !== action) return;
+      const signature = JSON.stringify(setup);
+      if (signature === lastProgress) return;
+      lastProgress = signature;
+      this.emit({ phase: 'setup-progress', operation: action, message: setup.stageDetail || setup.stageTitle, setup, logPath });
+    };
+    const progressTimer = setInterval(publishProgress, 350);
+    let result;
+    try {
+      result = await capture(helper, args, { timeout: 90 * 60_000, windowsHide: false });
+    } finally {
+      clearInterval(progressTimer);
+      publishProgress();
+      this.activeSetupAction = null;
+    }
     const outerDetail = [result.stdout, result.stderr].filter(Boolean).join('\n');
     if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, outerDetail, 'utf8');
     else if (outerDetail) fs.appendFileSync(logPath, `\n${outerDetail}\n`, 'utf8');
+    const marker = this.readMarker();
+    const setup = setupProgressFromMarker(marker);
+    const cancelled = Number(result.code) === 1223 || /cancel(?:led|ed)|拒绝|取消/i.test(`${result.stdout}\n${result.stderr}`);
+    const policyBlocked = isApplicationControlBlocked(`${result.stdout}\n${result.stderr}`);
+    const message = result.ok
+      ? (marker?.restartRequired ? '当前阶段已完成，需要重启 Windows 后继续' : '操作已完成')
+      : (policyBlocked ? 'Windows 阻止了安装助手，通常是应用程序控制或安全策略所致。请使用带有效数字签名的正式发布版本。' : cancelled ? '管理员授权已取消，没有更改电脑环境' : setup?.errorMessage || '操作失败，已保留进度，可查看详情后重试');
     if (result.ok && action === 'uninstall') this.clearSession();
-    this.emit({ phase: result.ok ? 'completed' : 'failed', message: result.ok ? '操作已完成' : '操作失败，请查看日志', logPath });
-    return { ...result, logPath, status: await this.getStatus() };
+    this.emit({ phase: result.ok ? 'completed' : 'failed', operation: action, message, setup, logPath });
+    return { ...result, message, setup, logPath, status: await this.getStatus() };
   }
 
   install() { return this.runSetupAction('install'); }
   uninstall() { return this.runSetupAction('uninstall'); }
+
+  async restartWindows() {
+    const result = await capture(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'shutdown.exe'), ['/r', '/t', '0'], { timeout: 10_000 });
+    if (!result.ok) throw new Error(result.stderr || result.stdout || 'Windows could not be restarted.');
+    return result;
+  }
 
   async elevateUsbipd(args) {
     for (const arg of args) {
@@ -409,4 +475,4 @@ class SystemManager {
   }
 }
 
-module.exports = { SystemManager, DISTRO, capture, decodeOutput, hasInstalledEnvironment, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, vidPidFromInstanceId };
+module.exports = { SystemManager, DISTRO, capture, decodeOutput, hasInstalledEnvironment, isApplicationControlBlocked, isWslUnavailable, parseUsbipdList, parseUsbipdState, restartStillPending, setupProgressFromMarker, vidPidFromInstanceId };

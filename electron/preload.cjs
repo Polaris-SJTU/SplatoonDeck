@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('splatoonDeck', {
     diagnose: () => ipcRenderer.invoke('system:diagnose'),
     install: () => ipcRenderer.invoke('system:install'),
     uninstall: () => ipcRenderer.invoke('system:uninstall'),
+    restartWindows: () => ipcRenderer.invoke('system:restart-windows'),
     attachBluetooth: (busId) => ipcRenderer.invoke('system:attach-bluetooth', busId),
     releaseBluetooth: () => ipcRenderer.invoke('system:release-bluetooth'),
     onProgress: (listener) => subscribe('system:progress', listener)

@@ -9,10 +9,12 @@ const {
   SystemManager,
   decodeOutput,
   hasInstalledEnvironment,
+  isApplicationControlBlocked,
   isWslUnavailable,
   parseUsbipdList,
   parseUsbipdState,
   restartStillPending,
+  setupProgressFromMarker,
   vidPidFromInstanceId
 } = require('./system-manager.cjs');
 
@@ -22,7 +24,8 @@ test('automatic status refresh does not launch WSL', () => {
   assert.match(source, /probeWsl \? capture\('wsl\.exe', \['--status'\]\) : skippedWslProbe/);
   assert.match(source, /probeWsl \? capture\('wsl\.exe', \['--list', '--quiet'\]\) : skippedWslProbe/);
   assert.match(source, /diagnose[\s\S]*getStatus\(\{ probeWsl: true \}\)/);
-  assert.match(source, /return \{ \.\.\.result, logPath, status: await this\.getStatus\(\) \}/);
+  assert.match(source, /return \{ \.\.\.result, message, setup, logPath, status: await this\.getStatus\(\) \}/);
+  assert.match(source, /setInterval\(publishProgress, 350\)/);
 });
 
 test('automatic status uses only the app-owned environment marker', () => {
@@ -37,6 +40,13 @@ test('detects disabled WSL status messages in supported UI languages', () => {
   assert.equal(isWslUnavailable('WSL2 无法启动，因为此计算机上未启用虚拟化。'), true);
   assert.equal(isWslUnavailable('WSL 2 を起動できません。仮想化が有効になっていません。'), true);
   assert.equal(isWslUnavailable('默认分发: SplatoonDeck\r\n默认版本: 2'), false);
+});
+
+test('detects Windows application control policy blocks', () => {
+  assert.equal(isApplicationControlBlocked('应用程序控制策略已阻止此文件。'), true);
+  assert.equal(isApplicationControlBlocked('This file was blocked by application control policy.'), true);
+  assert.equal(isApplicationControlBlocked('spawnSync SplatoonDeck.Setup.exe UNKNOWN'), true);
+  assert.equal(isApplicationControlBlocked('Installer returned exit code 1.'), false);
 });
 
 test('clears a restart request only after Windows has booted again', () => {
@@ -58,6 +68,53 @@ test('removes an uninstalled lifecycle marker after Windows restarts', () => {
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test('keeps a failed uninstall record after restart so cleanup can be retried', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'splatoon-deck-failed-cleanup-'));
+  try {
+    const manager = new SystemManager({ resourcesPath: temp, userDataPath: temp, emit: () => undefined });
+    manager.writeJson(manager.markerPath, { schema: 5, operation: 'uninstall', lifecycle: 'uninstall-failed', restartRequired: true, restartReason: 'uninstall', installedWslRuntimeByApp: true });
+    fs.utimesSync(manager.markerPath, new Date('2000-01-01'), new Date('2000-01-01'));
+    const marker = manager.reconcileRestartMarker();
+    assert.equal(marker.lifecycle, 'uninstall-failed');
+    assert.equal(marker.restartRequired, false);
+    assert.equal(marker.installedWslRuntimeByApp, true);
+    assert.equal(fs.existsSync(manager.markerPath), true);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('marks an interrupted install ready to continue after Windows restarts', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'splatoon-deck-resume-install-'));
+  try {
+    const manager = new SystemManager({ resourcesPath: temp, userDataPath: temp, emit: () => undefined });
+    manager.writeJson(manager.markerPath, { schema: 5, operation: 'install', lifecycle: 'installing', stageStatus: 'restart-required', restartRequired: true, restartReason: 'install', progressPercent: 57 });
+    fs.utimesSync(manager.markerPath, new Date('2000-01-01'), new Date('2000-01-01'));
+    const marker = manager.reconcileRestartMarker();
+    assert.equal(marker.stageStatus, 'ready-to-continue');
+    assert.equal(marker.restartRequired, false);
+    assert.equal(marker.progressPercent, 57);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('normalizes native setup markers into bounded UI progress', () => {
+  assert.equal(setupProgressFromMarker(null), null);
+  assert.equal(setupProgressFromMarker({ operation: 'usbipd' }), null);
+  assert.deepEqual(setupProgressFromMarker({
+    operation: 'install', operationId: 'abc', lifecycle: 'installing', phase: 'usbipd',
+    stageIndex: 3, stageTotal: 7, stageStatus: 'running', progressPercent: 140,
+    stageTitle: 'Preparing USB/IP', stageDetail: 'Downloading', nextTitle: 'Windows features'
+  }), {
+    operation: 'install', operationId: 'abc', lifecycle: 'installing', phase: 'usbipd',
+    stageIndex: 3, stageTotal: 7, stageStatus: 'running', stageTitle: 'Preparing USB/IP',
+    stageDetail: 'Downloading', nextTitle: 'Windows features', progressPercent: 100,
+    errorCode: null, errorMessage: null, retryable: false, awaitingUserConfirmation: false,
+    restartRequired: false, restartReason: null, updatedAt: ''
+  });
 });
 
 test('decodes UTF-16LE WSL diagnostics and UTF-8 application output', () => {
@@ -187,8 +244,15 @@ test('native helper streams progress, owns only new components, and preserves fa
   assert.match(helper, /Press Enter to close this window/);
   assert.match(helper, /wslEnvironmentExistedBefore/);
   assert.match(helper, /installedWslRuntimeByApp/);
-  assert.match(helper, /lifecycle.*uninstalled/);
+  assert.match(helper, /FinishOperation\("uninstalled"/);
   assert.match(helper, /restartReason.*uninstall/);
+  assert.match(helper, /baselineCaptured/);
+  assert.match(helper, /PauseForRestart/);
+  assert.match(helper, /stageIndex \* 100 \/ Math\.Max\(1, stageTotal\)/);
+  assert.match(helper, /File\.Replace\(temporary, path/);
+  assert.match(helper, /CleanupStage/);
+  assert.match(helper, /cleanupIssues/);
+  assert.match(helper, /RecordFailure/);
   assert.match(helper, /RedirectStandardInput = true/);
   assert.match(helper, /elapsed\.ElapsedMilliseconds < timeoutMilliseconds/);
   assert.match(helper, /\[TIMEOUT\]/);
@@ -196,7 +260,7 @@ test('native helper streams progress, owns only new components, and preserves fa
   assert.match(helper, /KillOnJobClose/);
   assert.match(helper, /AssignProcessToJobObject/);
   assert.match(helper, /SplatoonDeck\.DependencySetup/);
-  assert.match(helper, /Another Windows component operation is still running/);
+  assert.doesNotMatch(helper, /EnsureWindowsServicingIsIdle/);
   assert.doesNotMatch(helper, /PowerShell|Tee-Object|Start-Transcript/i);
 });
 
@@ -208,12 +272,29 @@ test('native helper prepares and restarts before launching WSL', () => {
   assert.match(helper, /Registry\.CurrentUser\.OpenSubKey\(@"Software\\Microsoft\\Windows\\CurrentVersion\\Lxss"\)/);
   assert.match(helper, /Microsoft\.WSL/);
   assert.doesNotMatch(helper, /Microsoft\.WSL[\s\S]{0,200}--force/);
-  assert.match(helper, /upgrade --id Microsoft\.WSL/);
+  assert.doesNotMatch(helper, /upgrade --id Microsoft\.WSL/);
   assert.match(helper, /install --id Microsoft\.WSL/);
-  assert.match(helper, /No WSL upgrade was applied/);
+  assert.match(helper, /already existed and will not be upgraded or replaced/);
+  assert.match(helper, /WindowsSubsystemForLinux/);
   assert.match(helper, /wslRuntimePrepared/);
   assert.match(helper, /A Windows restart is still required/);
+  assert.match(helper, /RunWindowsInstallerWithRetry/);
+  assert.match(helper, /Global\\_MSIExecute/);
+  assert.match(helper, /another installation is already in progress/);
+  assert.match(helper, /exit code: 1618/);
+  assert.match(helper, /Windows accepted the feature changes\. Their final enabled state will be verified after restart/);
+  assert.match(helper, /EnableFeatureWithDism\("Microsoft-Windows-Subsystem-Linux"\)/);
+  assert.match(helper, /EnableFeatureWithDism\("VirtualMachinePlatform"\)/);
+  assert.doesNotMatch(helper, /commands\.Run\("wsl\.exe", "--install/);
+  assert.match(helper, /options\.Action == "install-user"/);
+  assert.match(helper, /linux-user-pending/);
+  assert.match(helper, /InstallUserEnvironment/);
+  assert.match(helper, /RunDistroCommandWithRetry/);
+  assert.match(helper, /WSL_E_DISTRO_NOT_FOUND/);
+  assert.match(helper, /WSL error: /);
+  assert.doesNotMatch(helper, /Q\(ProgramDistro\)/);
   assert.ok(helper.indexOf('if (restartRequired)') < helper.indexOf('commands.Run("wsl.exe", "--version"'));
+  assert.match(helper, /var restart = state\.Bool\("restartRequired"\) && state\.Text\("restartReason"\) == "uninstall"/);
   assert.match(helper, /RemoveDistroRegistration\(ProgramDistro\)/);
   assert.match(helper, /String\.Equals\(name, distributionName, StringComparison\.OrdinalIgnoreCase\)/);
 });
@@ -229,16 +310,20 @@ test('native helper retries and resumes the Ubuntu download safely', () => {
   assert.match(helper, /SHA256SUMS/);
   assert.match(helper, /ComputeSha256/);
   assert.match(helper, /The Ubuntu checksum did not match/);
-  assert.match(helper, /--install --no-distribution/);
-  assert.doesNotMatch(helper, /EnableFeature\(name\)/);
+  assert.match(helper, /\/Enable-Feature \/FeatureName:/);
+  assert.match(helper, /\/All \/NoRestart/);
 });
 
-test('compiled native helper starts and captures live command output without elevation', () => {
+test('compiled native helper starts and captures live command output without elevation', (context) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'splatoondeck-native-helper-'));
   try {
     const helper = path.join(__dirname, '..', 'native', 'bin', 'SplatoonDeck.Setup.exe');
     const logPath = path.join(temp, 'self-test.log');
     const result = spawnSync(helper, ['self-test', '--state', path.join(temp, 'state.json'), '--log', logPath], { encoding: 'utf8', windowsHide: true });
+    if (result.status === null && isApplicationControlBlocked(result.error?.message || result.stderr || '')) {
+      context.skip('Windows application control policy blocked the freshly compiled unsigned test helper.');
+      return;
+    }
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const log = fs.readFileSync(logPath, 'utf8');
     assert.match(log, /Native command output ready/);
@@ -287,4 +372,11 @@ test('setup UI distinguishes install and uninstall restart states', () => {
   assert.match(source, /status\.restartReason === 'uninstall'/);
   assert.match(source, /重启后可重新安装/);
   assert.match(source, /依赖已卸载/);
+  assert.match(source, /INSTALL_STAGES/);
+  assert.match(source, /UNINSTALL_STAGES/);
+  assert.match(source, /立即重启/);
+  assert.match(source, /稍后我自己重启/);
+  assert.match(source, /restartWindows/);
+  assert.match(source, /ready-to-continue/);
+  assert.match(source, /继续安装/);
 });

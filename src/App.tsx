@@ -18,6 +18,7 @@ export default function App() {
   const { locale, setLocale, t, tx } = useI18n();
   const [page, setPage] = useState<Page>('setup');
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [setupProgress, setSetupProgress] = useState<SetupProgress | null>(null);
   const [connection, setConnection] = useState<ConnectionState>('offline');
   const [controllerMessage, setControllerMessage] = useState('等待连接');
   const [macroProgress, setMacroProgress] = useState<number | null>(null);
@@ -31,7 +32,9 @@ export default function App() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      setSystemStatus(await window.splatoonDeck.system.getStatus());
+      const latest = await window.splatoonDeck.system.getStatus();
+      setSystemStatus(latest);
+      setSetupProgress(latest.setup);
     } catch (error) {
       setToast(tx(error instanceof Error ? error.message : String(error)));
     }
@@ -41,7 +44,8 @@ export default function App() {
     refreshStatus();
     window.splatoonDeck.app.version().then(setVersion).catch(() => undefined);
     const offSystem = window.splatoonDeck.system.onProgress((event) => {
-      if (typeof event.message === 'string') setToast(tx(event.message));
+      if (typeof event.message === 'string' && event.phase !== 'setup-progress') setToast(tx(event.message));
+      if (event.setup) setSetupProgress(event.setup);
       if (event.phase === 'released' || event.phase === 'attached' || event.phase === 'completed') refreshStatus();
     });
     const offController = window.splatoonDeck.controller.onEvent((event) => {
@@ -147,7 +151,7 @@ export default function App() {
       </aside>
 
       <main className="main-content">
-        {page === 'setup' && <SetupPage status={systemStatus} refresh={refreshStatus} notify={setToast} />}
+        {page === 'setup' && <SetupPage status={systemStatus} progress={setupProgress} refresh={refreshStatus} notify={setToast} />}
         {page === 'controller' && (
           <ControllerPage
             connection={connection}

@@ -36,8 +36,38 @@ type SystemStatus = {
   usbipd: { installed: boolean; version?: string; devices: UsbDevice[]; detail: string; source?: string };
   bluetooth: { attachedBusId: string | null; candidates: UsbDevice[]; recoveredSession?: boolean };
   installMarker: Record<string, unknown> | null;
+  setup: SetupProgress | null;
   restartRequired: boolean;
   restartReason: 'install' | 'uninstall' | null;
+};
+
+type SetupProgress = {
+  operation: 'install' | 'uninstall';
+  operationId: string;
+  lifecycle: string;
+  phase: string;
+  stageIndex: number;
+  stageTotal: number;
+  stageStatus: 'running' | 'warning' | 'failed' | 'restart-required' | 'ready-to-continue' | 'completed' | string;
+  stageTitle: string;
+  stageDetail: string;
+  nextTitle: string;
+  progressPercent: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  retryable: boolean;
+  awaitingUserConfirmation: boolean;
+  restartRequired: boolean;
+  restartReason: 'install' | 'uninstall' | null;
+  updatedAt: string;
+};
+
+type SystemProgressEvent = {
+  phase: string;
+  operation?: 'install' | 'uninstall';
+  message?: string;
+  setup?: SetupProgress | null;
+  logPath?: string;
 };
 
 type ControllerEvent = {
@@ -57,9 +87,10 @@ interface Window {
       diagnose(): Promise<DiagnosticReport>;
       install(): Promise<Record<string, unknown>>;
       uninstall(): Promise<Record<string, unknown>>;
+      restartWindows(): Promise<Record<string, unknown>>;
       attachBluetooth(busId: string): Promise<SystemStatus>;
       releaseBluetooth(): Promise<Record<string, unknown>>;
-      onProgress(listener: (event: Record<string, unknown>) => void): () => void;
+      onProgress(listener: (event: SystemProgressEvent) => void): () => void;
     };
     controller: {
       connect(options?: { reconnect?: boolean }): Promise<{ ok: boolean }>;

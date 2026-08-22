@@ -37,7 +37,7 @@ Download the current version: [`SplatoonDeck-0.3.0-portable.exe`](https://github
 
 SplatoonDeck is a single-file portable app and does not need a traditional installation. For later versions, visit [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest).
 
-`v0.3.0` adds timed controller macro recording with fixed-count or continuous playback and rebuilds environment management around resumable stages. Setup shows live steps, progress, and command output, while closing its window also cancels child processes. The Ubuntu environment download supports resume, automatic retries, and SHA-256 verification. Cleanup removes only components added by SplatoonDeck while preserving pre-existing or shared WSL environments. See the complete [v0.3.0 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0).
+`v0.3.0` adds timed controller macro recording with fixed-count or continuous playback and rebuilds environment management around resumable stages. Setup shows live steps, progress, and command output, while closing its window also cancels child processes. Creating and starting the dedicated Linux environment now works with current WSL releases, and the Ubuntu download supports resume, automatic retries, and SHA-256 verification. Cleanup removes only components added by SplatoonDeck while preserving pre-existing or shared WSL environments. See the complete [v0.3.0 release notes](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0).
 
 ### Connect to Switch 2 for the first time
 
@@ -131,6 +131,7 @@ Import an image, tune its monochrome pixel treatment, preview the `320 × 120` g
 - Live steps and command output in setup and cleanup windows; failures remain visible until confirmation and include the log location.
 - Setup and cleanup are single-instance operations; closing the progress window also stops the DISM, winget, and other child processes it started.
 - The Ubuntu environment download supports resume, four automatic retries, and official SHA-256 verification, so incomplete files are never imported.
+- First launch of the dedicated Linux environment is compatible with current WSL 2.7 releases and was verified on a Windows environment that did not previously have WSL.
 - Separate setup and cleanup restart states, avoiding a misleading Continue Installation prompt after removal.
 - Removal of the WSL runtime and Windows features introduced by SplatoonDeck on a previously WSL-free PC, while preserving existing environments and other distributions.
 - Setup progress and component ownership are preserved across restarts, so the app can safely continue setup or clean up later.

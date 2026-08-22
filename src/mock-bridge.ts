@@ -1,4 +1,4 @@
-const systemListeners = new Set<(event: Record<string, unknown>) => void>();
+const systemListeners = new Set<(event: SystemProgressEvent) => void>();
 const controllerListeners = new Set<(event: ControllerEvent) => void>();
 let mockMacroTimer: number | null = null;
 let mockMacroProgress = 0;
@@ -20,6 +20,7 @@ const status = (): SystemStatus => ({
   usbipd: { installed: true, devices: [mockAdapter], detail: '' },
   bluetooth: { attachedBusId, candidates: [mockAdapter] },
   installMarker: { preview: true },
+  setup: null,
   restartRequired: false,
   restartReason: null
 });
@@ -42,6 +43,7 @@ if (import.meta.env.DEV && !window.splatoonDeck) {
       }),
       install: async () => { systemListeners.forEach((fn) => fn({ phase: 'completed', message: '预览：依赖检查完成' })); return {}; },
       uninstall: async () => ({}),
+      restartWindows: async () => ({}),
       attachBluetooth: async (busId) => { attachedBusId = busId; systemListeners.forEach((fn) => fn({ phase: 'attached', message: '预览：蓝牙已接管' })); return status(); },
       releaseBluetooth: async () => { attachedBusId = null; systemListeners.forEach((fn) => fn({ phase: 'released', message: '预览：蓝牙已归还' })); return {}; },
       onProgress: (listener) => { systemListeners.add(listener); return () => systemListeners.delete(listener); }

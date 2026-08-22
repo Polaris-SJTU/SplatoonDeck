@@ -34,14 +34,16 @@ namespace SplatoonDeck.Setup
             {
                 var options = Options.Parse(args);
                 if (options.Action == "self-test") return RunSelfTest(options);
-                if (!options.Elevated) return RelaunchElevated(options);
-                if (!IsAdministrator()) throw new UnauthorizedAccessException("Administrator permission was not granted.");
+                var userPhase = options.Action == "install-user";
+                if (!userPhase && !options.Elevated) return RelaunchElevated(options);
+                if (!userPhase && !IsAdministrator()) throw new UnauthorizedAccessException("Administrator permission was not granted.");
                 OpenProgressConsole();
                 Console.OutputEncoding = new UTF8Encoding(false);
-                var actionTitle = options.Action == "uninstall" ? "Uninstalling dependencies" : options.Action == "usbipd" ? "Updating Bluetooth access" : "Installing dependencies";
+                var actionTitle = options.Action == "uninstall" ? "Uninstalling dependencies" : options.Action == "usbipd" ? "Updating Bluetooth access" : userPhase ? "Preparing the Linux environment" : "Installing dependencies";
                 Console.Title = "SplatoonDeck - " + actionTitle;
                 using (var log = new Logger(options.LogPath))
                 {
+                    DependencyWorkflow workflow = null;
                     try
                     {
                         log.Line("SplatoonDeck - " + actionTitle, ConsoleColor.Cyan);
@@ -49,16 +51,20 @@ namespace SplatoonDeck.Setup
                         log.Line("");
                         using (var operation = OperationGuard.Acquire(options.Action))
                         {
-                            EnsureWindowsServicingIsIdle(options.Action);
-                            var workflow = new DependencyWorkflow(options, log);
+                            workflow = new DependencyWorkflow(options, log);
                             if (options.Action == "uninstall") workflow.Uninstall();
                             else if (options.Action == "usbipd") workflow.RunUsbipd(options.UsbipdPath, options.UsbipdArguments());
+                            else if (userPhase) workflow.InstallUserEnvironment();
                             else workflow.Install();
                         }
                         log.Line("");
                         var completed = options.Action == "uninstall" ? "Dependency cleanup completed." : options.Action == "usbipd" ? "Bluetooth access updated." : "Dependency setup completed.";
                         if (options.Action == "install" && new StateStore(options.StatePath).Bool("restartRequired"))
                             completed = "Prerequisite stage completed. Restart Windows to continue setup.";
+                        if (options.Action == "install" && new StateStore(options.StatePath).Text("phase") == "linux-user-pending")
+                            completed = "System prerequisites completed. Continuing Linux setup as the signed-in Windows user.";
+                        if (options.Action == "uninstall" && new StateStore(options.StatePath).Bool("restartRequired"))
+                            completed = "Dependency cleanup completed. Restart Windows to finish restoring the original environment.";
                         log.Line("[DONE] " + completed, ConsoleColor.Green);
                         log.Line("Log: " + options.LogPath, ConsoleColor.DarkGray);
                         Thread.Sleep(2000);
@@ -66,6 +72,7 @@ namespace SplatoonDeck.Setup
                     }
                     catch (Exception error)
                     {
+                        if (workflow != null && (options.Action == "install" || options.Action == "install-user" || options.Action == "uninstall")) workflow.RecordFailure(error);
                         log.Line("");
                         log.Line("[FAILED] The operation could not be completed.", ConsoleColor.Red);
                         log.Line(error.ToString(), ConsoleColor.Red);
@@ -73,6 +80,7 @@ namespace SplatoonDeck.Setup
                         log.Line("");
                         Console.Write("Press Enter to close this window: ");
                         Console.ReadLine();
+                        if (workflow != null && (options.Action == "install" || options.Action == "install-user" || options.Action == "uninstall")) workflow.MarkFailureAcknowledged();
                         return 1;
                     }
                 }
@@ -101,8 +109,27 @@ namespace SplatoonDeck.Setup
                 {
                     if (process == null) return 1;
                     process.WaitForExit();
-                    return process.ExitCode;
+                    if (process.ExitCode != 0) return process.ExitCode;
                 }
+                var state = new StateStore(options.StatePath);
+                if (options.Action == "install" && state.Text("phase") == "linux-user-pending" && state.Text("stageStatus") == "ready-for-user-phase")
+                {
+                    var userInfo = new ProcessStartInfo
+                    {
+                        FileName = Process.GetCurrentProcess().MainModule.FileName,
+                        Arguments = String.Join(" ", options.ForAction("install-user").Select(CommandRunner.QuoteArgument)),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory
+                    };
+                    using (var userProcess = Process.Start(userInfo))
+                    {
+                        if (userProcess == null) return 1;
+                        userProcess.WaitForExit();
+                        return userProcess.ExitCode;
+                    }
+                }
+                return 0;
             }
             catch (Win32Exception error)
             {
@@ -115,20 +142,6 @@ namespace SplatoonDeck.Setup
             using (var identity = WindowsIdentity.GetCurrent())
             {
                 return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
-            }
-        }
-
-        private static void EnsureWindowsServicingIsIdle(string action)
-        {
-            if (action != "install" && action != "uninstall") return;
-            var active = Process.GetProcessesByName("dism").Concat(Process.GetProcessesByName("DismHost")).ToArray();
-            try
-            {
-                if (active.Length > 0) throw new InvalidOperationException("Another Windows component operation is still running. Close other setup windows, restart Windows, then retry.");
-            }
-            finally
-            {
-                foreach (var process in active) process.Dispose();
             }
         }
 
@@ -162,6 +175,10 @@ namespace SplatoonDeck.Setup
                 if (result.ExitCode != 0 || result.Output.IndexOf("Native command output ready", StringComparison.Ordinal) < 0) return 1;
                 var timeout = runner.Run(command, "/d /c ping -n 6 127.0.0.1 >nul", true, 250);
                 if (!timeout.TimedOut) return 1;
+                var state = new StateStore(options.StatePath);
+                state.Values["selfTest"] = true;
+                state.Save();
+                if (!new StateStore(options.StatePath).Bool("selfTest") || File.Exists(options.StatePath + ".new")) return 1;
                 log.Line("Self-test passed.", ConsoleColor.Green);
                 return 0;
             }
@@ -295,7 +312,7 @@ namespace SplatoonDeck.Setup
 
         public static Options Parse(string[] args)
         {
-            if (args.Length == 0 || (args[0] != "install" && args[0] != "uninstall" && args[0] != "usbipd" && args[0] != "self-test")) throw new ArgumentException("Expected install, uninstall, usbipd, or self-test action.");
+            if (args.Length == 0 || (args[0] != "install" && args[0] != "install-user" && args[0] != "uninstall" && args[0] != "usbipd" && args[0] != "self-test")) throw new ArgumentException("Expected install, install-user, uninstall, usbipd, or self-test action.");
             var result = new Options { Action = args[0] };
             for (var index = 1; index < args.Length; index++)
             {
@@ -321,6 +338,8 @@ namespace SplatoonDeck.Setup
             return values.ToArray();
         }
 
+        public string[] ForAction(string action) { return BaseArguments(action).ToArray(); }
+
         public string ToCommandLine(bool elevated)
         {
             var values = BaseArguments();
@@ -328,9 +347,11 @@ namespace SplatoonDeck.Setup
             return String.Join(" ", values.Select(CommandRunner.QuoteArgument));
         }
 
-        private List<string> BaseArguments()
+        private List<string> BaseArguments() { return BaseArguments(Action); }
+
+        private List<string> BaseArguments(string action)
         {
-            var values = new List<string> { Action, "--state", StatePath, "--session", SessionPath ?? "", "--linux-setup", LinuxSetupPath ?? "", "--log", LogPath };
+            var values = new List<string> { action, "--state", StatePath, "--session", SessionPath ?? "", "--linux-setup", LinuxSetupPath ?? "", "--log", LogPath };
             if (!String.IsNullOrWhiteSpace(UsbipdPath)) { values.Add("--usbipd"); values.Add(UsbipdPath); }
             if (!String.IsNullOrWhiteSpace(UsbipdArgumentsBase64)) { values.Add("--usbipd-args"); values.Add(UsbipdArgumentsBase64); }
             return values;
@@ -455,6 +476,9 @@ namespace SplatoonDeck.Setup
         {
             if (line == null) return;
             line = Clean(line);
+            var wslError = System.Text.RegularExpressions.Regex.Match(line, @"Wsl/[A-Za-z0-9_./-]+");
+            if (wslError.Success) line = "WSL error: " + wslError.Value;
+            else if (line.IndexOf('\uFFFD') >= 0) return;
             lock (output) output.AppendLine(line);
             log.Line(line);
         }
@@ -508,7 +532,15 @@ namespace SplatoonDeck.Setup
         public void Save()
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllText(path, serializer.Serialize(Values), new UTF8Encoding(false));
+            var temporary = path + ".new";
+            File.WriteAllText(temporary, serializer.Serialize(Values), new UTF8Encoding(false));
+            if (File.Exists(path))
+            {
+                try { File.Replace(temporary, path, null, true); }
+                catch (PlatformNotSupportedException) { File.Copy(temporary, path, true); File.Delete(temporary); }
+                catch (IOException) { File.Copy(temporary, path, true); File.Delete(temporary); }
+            }
+            else File.Move(temporary, path);
         }
 
         public bool Bool(string key)
@@ -559,6 +591,9 @@ namespace SplatoonDeck.Setup
         private readonly string wslRoot;
         private readonly string downloadRoot;
         private readonly string archive;
+        private string operation;
+        private int stageIndex;
+        private int stageTotal;
 
         public DependencyWorkflow(Options options, Logger log)
         {
@@ -572,154 +607,324 @@ namespace SplatoonDeck.Setup
             archive = Path.Combine(downloadRoot, "ubuntu-wsl-rootfs.tar.gz");
         }
 
+        public void RecordFailure(Exception error)
+        {
+            state.Values["lifecycle"] = operation == "uninstall" ? "uninstall-failed" : "install-failed";
+            state.Values["stageStatus"] = "failed-awaiting-confirmation";
+            state.Values["awaitingUserConfirmation"] = true;
+            state.Values["failedPhase"] = state.Text("phase");
+            state.Values["errorCode"] = ErrorCode(error);
+            state.Values["errorMessage"] = FriendlyError(error);
+            state.Values["errorDetail"] = error.ToString();
+            state.Values["retryable"] = true;
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+        }
+
+        public void MarkFailureAcknowledged()
+        {
+            state.Values["stageStatus"] = "failed";
+            state.Values["awaitingUserConfirmation"] = false;
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+        }
+
+        private void StartOperation(string value, int total)
+        {
+            operation = value;
+            stageIndex = 0;
+            stageTotal = total;
+            state.Values["operation"] = value;
+            state.Values["operationId"] = Guid.NewGuid().ToString("N");
+            state.Values["stageIndex"] = 0;
+            state.Values["stageTotal"] = total;
+            state.Values["stageStatus"] = "running";
+            state.Values["awaitingUserConfirmation"] = false;
+            state.Values["progressPercent"] = 0;
+            state.Values["errorCode"] = null;
+            state.Values["errorMessage"] = null;
+            state.Values["errorDetail"] = null;
+            state.Values["failedPhase"] = null;
+            state.Values["retryable"] = false;
+            state.Values["startedAt"] = DateTime.UtcNow.ToString("o");
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+        }
+
+        private void Stage(int index, string phase, string title, string nextTitle)
+        {
+            stageIndex = index;
+            state.Values["phase"] = phase;
+            state.Values["stageIndex"] = index;
+            state.Values["stageTotal"] = stageTotal;
+            state.Values["stageTitle"] = title;
+            state.Values["stageDetail"] = title;
+            state.Values["nextTitle"] = nextTitle ?? "";
+            state.Values["stageStatus"] = "running";
+            state.Values["awaitingUserConfirmation"] = false;
+            state.Values["progressPercent"] = Math.Max(0, Math.Min(99, (index - 1) * 100 / Math.Max(1, stageTotal)));
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+            log.Line("[" + index + "/" + stageTotal + "] " + title, ConsoleColor.Cyan);
+        }
+
+        private void FinishOperation(string lifecycle, string phase, bool restartRequired, string restartReason)
+        {
+            state.Values["lifecycle"] = lifecycle;
+            state.Values["phase"] = phase;
+            state.Values["stageStatus"] = restartRequired ? "restart-required" : "completed";
+            state.Values["progressPercent"] = 100;
+            state.Values["restartRequired"] = restartRequired;
+            state.Values["restartReason"] = restartRequired ? restartReason : null;
+            state.Values["completed"] = lifecycle == "installed";
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+        }
+
+        private void PauseForRestart(string reason)
+        {
+            state.Values["lifecycle"] = operation == "uninstall" ? "uninstalling" : "installing";
+            state.Values["phase"] = "restart-pending";
+            state.Values["stageStatus"] = "restart-required";
+            state.Values["progressPercent"] = Math.Max(0, Math.Min(99, stageIndex * 100 / Math.Max(1, stageTotal)));
+            state.Values["restartRequired"] = true;
+            state.Values["restartReason"] = reason;
+            state.Values["completed"] = false;
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+        }
+
+        private static string ErrorCode(Exception error)
+        {
+            if (error is UnauthorizedAccessException) return "ADMIN_REQUIRED";
+            if (error is TimeoutException) return "COMMAND_TIMEOUT";
+            if (error is FileNotFoundException) return "REQUIRED_FILE_MISSING";
+            if (error is WebException || error is IOException) return "NETWORK_OR_FILE_ERROR";
+            return "SETUP_FAILED";
+        }
+
+        private static string FriendlyError(Exception error)
+        {
+            if (error is TimeoutException) return "A Windows setup command took too long. Restart Windows, then retry this operation.";
+            if (error is WebException) return "A required download failed. Check the network connection and retry; completed download data will be reused.";
+            return error.Message;
+        }
+
         public void Install()
         {
             Directory.CreateDirectory(appRoot);
             Directory.CreateDirectory(downloadRoot);
             var previousLifecycle = state.Text("lifecycle");
-            var preservePrevious = File.Exists(options.StatePath) && previousLifecycle != "uninstalled";
-            if (preservePrevious && state.Bool("restartRequired") && state.Text("restartReason") == "install")
+            if (previousLifecycle == "uninstalling" || previousLifecycle == "uninstall-failed")
+                throw new InvalidOperationException("Dependency cleanup is incomplete. Retry Uninstall Dependencies before installing again.");
+            if (state.Bool("restartRequired") && state.Text("restartReason") == "install")
             {
+                state.Values["stageStatus"] = "restart-required";
+                state.Values["stageDetail"] = "Restart Windows before continuing dependency setup.";
+                state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+                state.Save();
                 log.Line("A Windows restart is still required. Restart Windows before continuing dependency setup.", ConsoleColor.Yellow);
                 return;
             }
 
-            Step("1/6", "Checking the existing Windows environment");
-            var winget = FindExecutable("winget.exe");
-            if (String.IsNullOrEmpty(winget)) throw new InvalidOperationException("winget was not found. Update App Installer from Microsoft Store and try again.");
-            var wslFeatureBefore = IsFeatureEnabled("Microsoft-Windows-Subsystem-Linux");
-            var vmFeatureBefore = IsFeatureEnabled("VirtualMachinePlatform");
-            var msiBefore = FindWslMsiProducts();
-            var usbipdMsiBefore = FindUsbipdMsiProducts();
-            var wslRuntimeBefore = msiBefore.Count > 0 || IsWingetPackageInstalled("Microsoft.WSL");
-            var usbipdBefore = !String.IsNullOrEmpty(FindUsbipd());
-            if (!preservePrevious)
-            {
-                state.Values.Clear();
-                state.Values["installedAt"] = DateTime.UtcNow.ToString("o");
-                state.Values["createdDistroByApp"] = false;
-                state.Values["installedUsbipdByApp"] = false;
-                state.Values["enabledWslFeatureByApp"] = false;
-                state.Values["enabledVmFeatureByApp"] = false;
-                state.Values["boundBluetoothByApp"] = new object[0];
-                state.Values["wslEnvironmentExistedBefore"] = wslFeatureBefore || wslRuntimeBefore || ListDistros().Count > 0;
-                state.Values["wslMsiProductsBefore"] = msiBefore.ToArray();
-                state.Values["usbipdMsiProductsBefore"] = usbipdMsiBefore.ToArray();
-                state.Values["installedWslMsiProductsByApp"] = new object[0];
-                state.Values["installedUsbipdMsiProductsByApp"] = new object[0];
-                state.Values["installedWslRuntimeByApp"] = false;
-                state.Values["wslRuntimePrepared"] = false;
-            }
-            state.Values["schema"] = 4;
+            var existingRecord = File.Exists(options.StatePath) && !String.IsNullOrEmpty(previousLifecycle);
+            var newBaseline = !existingRecord || previousLifecycle == "uninstalled";
+            if (newBaseline) state.Values.Clear();
+            else if (!state.Bool("baselineCaptured")) MigrateLegacyBaseline();
+            state.Values["schema"] = 5;
             state.Values["distro"] = ProgramDistro;
             state.Values["lifecycle"] = "installing";
             state.Values["restartRequired"] = false;
             state.Values["restartReason"] = null;
-            state.Values["phase"] = "prerequisites";
-            state.Save();
+            StartOperation("install", 7);
 
-            Step("2/6", "Preparing the current Microsoft WSL runtime");
+            Stage(1, "baseline", "Checking the existing Windows environment", "Prepare the WSL runtime");
+            var winget = FindExecutable("winget.exe");
+            if (String.IsNullOrEmpty(winget)) throw new InvalidOperationException("winget was not found. Update App Installer from Microsoft Store and try again.");
+            if (newBaseline) CaptureBaseline();
+            else Detail("Reusing the original environment snapshot so a later uninstall can still restore it.");
+            ReconcileInterruptedInstall();
+            if (state.Bool("dedicatedDistroExistedBefore") && !state.Bool("createdDistroByApp"))
+                throw new InvalidOperationException("A Linux distribution named SplatoonDeck already existed before setup. Rename or remove that distribution, then retry; it will not be modified by this app.");
+
+            Stage(2, "wsl-runtime", "Preparing the Microsoft WSL runtime", "Prepare USB/IP support");
             var restartRequired = false;
-            if (!state.Bool("wslRuntimePrepared"))
+            if (!CurrentWslRuntimeInstalled())
             {
-                state.Values["phase"] = "wsl-runtime";
+                Detail("Installing Microsoft WSL because no WSL runtime package existed in the original environment.");
+                state.Values["wslRuntimeInstallAttempted"] = true;
                 state.Save();
-                if (wslRuntimeBefore)
-                {
-                    Detail("Microsoft WSL is already installed. Checking for an available update without reinstalling the package.");
-                    var upgrade = commands.Run(winget, "upgrade --id Microsoft.WSL --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity", true, 10 * 60 * 1000);
-                    if (upgrade.ExitCode == 0) restartRequired = true;
-                    else Detail("No WSL upgrade was applied. The installed runtime will be verified after the prerequisite stage.");
-                }
-                else
-                {
-                    Detail("Installing the current Microsoft WSL package silently. WSL will not be started during this stage.");
-                    state.Values["installedWslRuntimeByApp"] = true;
-                    state.Save();
-                    commands.Run(winget, "install --id Microsoft.WSL --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity", false, 10 * 60 * 1000);
-                    restartRequired = true;
-                }
-                state.Values["wslRuntimePrepared"] = true;
-                var before = state.Strings("wslMsiProductsBefore");
-                state.Values["installedWslMsiProductsByApp"] = FindWslMsiProducts().Where(code => !before.Contains(code, StringComparer.OrdinalIgnoreCase)).ToArray();
-                state.Save();
+                var install = RunWindowsInstallerWithRetry(winget, "install --id Microsoft.WSL --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity", "Microsoft WSL", 10 * 60 * 1000);
+                WaitForWindowsInstallerIdle("finishing the Microsoft WSL installation", 3 * 60 * 1000);
+                if (!CurrentWslRuntimeInstalled())
+                    throw new InvalidOperationException("Microsoft WSL could not be installed (exit code " + install.ExitCode + ").\n" + install.Output);
+                state.Values["installedWslRuntimeByApp"] = !state.Bool("wslRuntimeInstalledBefore");
+                state.Values["wslInstallMethod"] = "winget";
+                restartRequired |= install.ExitCode == 3010;
             }
-            else Detail("The WSL runtime preparation stage is already complete.");
-
-            Step("3/6", "Preparing usbipd-win");
-            if (!usbipdBefore && String.IsNullOrEmpty(FindUsbipd()))
-            {
-                Detail("Downloading and installing usbipd-win with winget.");
-                state.Values["installedUsbipdByApp"] = true;
-                state.Values["phase"] = "usbipd";
-                state.Save();
-                commands.Run(winget, "install --id dorssel.usbipd-win --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity", false, 10 * 60 * 1000);
-                var before = state.Strings("usbipdMsiProductsBefore");
-                state.Values["installedUsbipdMsiProductsByApp"] = FindUsbipdMsiProducts().Where(code => !before.Contains(code, StringComparer.OrdinalIgnoreCase)).ToArray();
-                state.Save();
-            }
-            else Detail("usbipd-win is already available.");
-
-            Step("4/6", "Enabling required Windows features");
-            if (!wslFeatureBefore || !vmFeatureBefore)
-            {
-                if (!wslFeatureBefore) state.Values["enabledWslFeatureByApp"] = true;
-                if (!vmFeatureBefore) state.Values["enabledVmFeatureByApp"] = true;
-                state.Values["phase"] = "windows-features";
-                state.Save();
-                Detail("Running the current WSL installer to enable the required Windows features (no default distribution will be added).");
-                var install = commands.Run("wsl.exe", "--install --no-distribution", false, 30 * 60 * 1000);
-                if (install.ExitCode != 0 && install.ExitCode != 3010)
-                    throw new InvalidOperationException("wsl --install could not enable the required Windows features (exit code " + install.ExitCode + ").\n" + install.Output);
-                restartRequired = true;
-                state.Save();
-            }
-            else Detail("The required Windows features (WSL and Virtual Machine Platform) are already enabled.");
+            else Detail(state.Bool("wslRuntimeInstalledBefore") ? "Microsoft WSL already existed and will not be upgraded or replaced." : "The WSL runtime installed by the previous attempt is ready.");
+            state.Values["wslRuntimePrepared"] = true;
+            state.Values["installedWslMsiProductsByApp"] = AddedProducts("wslMsiProductsBefore", FindWslMsiProducts()).ToArray();
             state.Values["restartRequired"] = restartRequired;
             state.Values["restartReason"] = restartRequired ? "install" : null;
-            state.Values["phase"] = restartRequired ? "restart-pending" : "wsl-verification";
             state.Save();
+
+            Stage(3, "usbipd", "Preparing USB/IP support", "Enable Windows features");
+            if (String.IsNullOrEmpty(FindUsbipd()))
+            {
+                Detail("Downloading and installing usbipd-win with winget.");
+                state.Values["usbipdInstallAttempted"] = true;
+                state.Save();
+                var install = RunWindowsInstallerWithRetry(winget, "install --id dorssel.usbipd-win --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity", "usbipd-win", 10 * 60 * 1000);
+                WaitForWindowsInstallerIdle("finishing the usbipd-win installation", 3 * 60 * 1000);
+                if (String.IsNullOrEmpty(FindUsbipd()))
+                    throw new InvalidOperationException("usbipd-win could not be installed (exit code " + install.ExitCode + ").\n" + install.Output);
+                state.Values["installedUsbipdByApp"] = !state.Bool("usbipdInstalledBefore");
+                restartRequired |= install.ExitCode == 3010;
+            }
+            else Detail(state.Bool("usbipdInstalledBefore") ? "usbipd-win already existed and will be preserved." : "The usbipd-win copy installed by the previous attempt is ready.");
+            state.Values["installedUsbipdMsiProductsByApp"] = AddedProducts("usbipdMsiProductsBefore", FindUsbipdMsiProducts()).ToArray();
+            state.Values["restartRequired"] = restartRequired;
+            state.Values["restartReason"] = restartRequired ? "install" : null;
+            state.Save();
+
+            Stage(4, "windows-features", "Enabling the required Windows features", "Create the private Linux environment");
+            var wslFeatureEnabled = IsFeatureEnabled("Microsoft-Windows-Subsystem-Linux");
+            var vmFeatureEnabled = IsFeatureEnabled("VirtualMachinePlatform");
+            if (!wslFeatureEnabled || !vmFeatureEnabled)
+            {
+                state.Values["windowsFeatureEnableAttempted"] = true;
+                state.Save();
+                if (!wslFeatureEnabled)
+                {
+                    if (!state.Bool("wslFeatureEnabledBefore")) state.Values["enabledWslFeatureByApp"] = true;
+                    state.Save();
+                    restartRequired |= EnableFeatureWithDism("Microsoft-Windows-Subsystem-Linux");
+                }
+                if (!vmFeatureEnabled)
+                {
+                    if (!state.Bool("vmFeatureEnabledBefore")) state.Values["enabledVmFeatureByApp"] = true;
+                    state.Save();
+                    restartRequired |= EnableFeatureWithDism("VirtualMachinePlatform");
+                }
+                state.Save();
+                Detail("Windows accepted the feature changes. Their final enabled state will be verified after restart.");
+            }
+            else Detail("The required Windows features (WSL and Virtual Machine Platform) are already enabled.");
 
             if (restartRequired)
             {
+                state.Values["nextTitle"] = "Restart Windows, then continue creating the private Linux environment";
+                PauseForRestart("install");
                 log.Line("The Windows prerequisites are ready. Restart Windows, then click Continue After Restart in SplatoonDeck.", ConsoleColor.Yellow);
                 return;
             }
 
-            Step("5/6", "Verifying WSL and importing the dedicated Linux environment");
+            state.Values["lifecycle"] = "installing";
+            state.Values["phase"] = "linux-user-pending";
+            state.Values["stageIndex"] = 5;
+            state.Values["stageTotal"] = 7;
+            state.Values["stageStatus"] = "ready-for-user-phase";
+            state.Values["stageTitle"] = "Create the private SplatoonDeck Linux environment";
+            state.Values["stageDetail"] = "System prerequisites are ready. Continuing Linux setup as the signed-in Windows user.";
+            state.Values["nextTitle"] = "Install BlueZ, Python and NXBT";
+            state.Values["progressPercent"] = 57;
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+            log.Line("System prerequisites are ready. Continuing the Linux environment setup as the signed-in Windows user.", ConsoleColor.Cyan);
+        }
+
+        public void InstallUserEnvironment()
+        {
+            if (!File.Exists(options.StatePath)) throw new InvalidOperationException("The dependency setup record is missing. Start dependency installation again.");
+            if (state.Bool("restartRequired")) throw new InvalidOperationException("Restart Windows before continuing the Linux environment setup.");
+            operation = "install";
+            stageTotal = 7;
+            stageIndex = 4;
+            state.Values["operation"] = "install";
+            state.Values["lifecycle"] = "installing";
+            state.Values["stageStatus"] = "running";
+            state.Values["errorCode"] = null;
+            state.Values["errorMessage"] = null;
+            state.Values["errorDetail"] = null;
+            state.Values["failedPhase"] = null;
+            state.Values["retryable"] = false;
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+
+            Stage(5, "linux-environment", "Creating the private SplatoonDeck Linux environment", "Install BlueZ, Python and NXBT");
             var version = commands.Run("wsl.exe", "--version", true, 30 * 1000);
             if (version.ExitCode != 0 || version.TimedOut)
                 throw new InvalidOperationException("The prepared WSL runtime is not ready. Restart Windows and try again.\n" + version.Output);
-            var distros = ListDistros();
-            if (!distros.Contains(ProgramDistro, StringComparer.OrdinalIgnoreCase))
+            var distroPath = FindDistroBasePath(ProgramDistro);
+            if (String.IsNullOrEmpty(distroPath))
             {
                 var architecture = String.Equals(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE"), "ARM64", StringComparison.OrdinalIgnoreCase) ? "arm64" : "amd64";
                 var url = "https://cloud-images.ubuntu.com/wsl/releases/noble/current/ubuntu-noble-wsl-" + architecture + "-wsl.rootfs.tar.gz";
                 DownloadWithResume(url, archive);
                 Directory.CreateDirectory(wslRoot);
                 Detail("Importing the isolated SplatoonDeck Linux environment.");
-                commands.Run("wsl.exe", "--import " + Q(ProgramDistro) + " " + Q(wslRoot) + " " + Q(archive) + " --version 2", false, 10 * 60 * 1000);
-                state.Values["createdDistroByApp"] = true;
-                state.Values["phase"] = "linux-packages";
+                state.Values["distroImportAttempted"] = true;
                 state.Save();
+                commands.Run("wsl.exe", "--import " + ProgramDistro + " " + Q(wslRoot) + " " + Q(archive) + " --version 2", false, 10 * 60 * 1000);
+                distroPath = FindDistroBasePath(ProgramDistro);
             }
-            else Detail("The SplatoonDeck Linux environment is already present.");
+            if (!IsExpectedDistroPath(distroPath))
+                throw new InvalidOperationException("The SplatoonDeck Linux environment points to an unexpected location and will not be modified: " + distroPath);
+            state.Values["createdDistroByApp"] = true;
+            state.Save();
+            WaitForDistroReady();
 
-            Step("6/6", "Installing BlueZ, Python and NXBT");
+            Stage(6, "linux-packages", "Installing BlueZ, Python and NXBT", "Verify the completed environment");
             if (String.IsNullOrWhiteSpace(options.LinuxSetupPath) || !File.Exists(options.LinuxSetupPath)) throw new FileNotFoundException("Linux setup script was not found.", options.LinuxSetupPath);
-            var linuxPathResult = commands.Run("wsl.exe", "-d " + Q(ProgramDistro) + " -u root -- wslpath -a " + Q(options.LinuxSetupPath.Replace("\\", "\\\\")));
+            var linuxPathResult = RunDistroCommandWithRetry("-u root -- wslpath -a " + Q(options.LinuxSetupPath.Replace("\\", "\\\\")), false, 60 * 1000);
             var linuxPath = linuxPathResult.Output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
             if (String.IsNullOrWhiteSpace(linuxPath)) throw new InvalidOperationException("Could not resolve the Linux dependency setup path.");
             Detail("Linux package output will appear below.");
-            commands.Run("wsl.exe", "-d " + Q(ProgramDistro) + " -u root -- bash " + Q(linuxPath));
-            commands.Run("wsl.exe", "--terminate " + Q(ProgramDistro), true);
-            state.Values["restartRequired"] = false;
-            state.Values["restartReason"] = null;
-            state.Values["lifecycle"] = "installed";
-            state.Values["phase"] = "complete";
-            state.Values["completed"] = true;
+            RunDistroCommandWithRetry("-u root -- bash " + Q(linuxPath), false, 30 * 60 * 1000);
+
+            Stage(7, "verification", "Verifying the completed environment", null);
+            VerifyInstalledEnvironment();
+            commands.Run("wsl.exe", "--terminate " + ProgramDistro, true);
             state.Values["completedAt"] = DateTime.UtcNow.ToString("o");
-            state.Save();
+            FinishOperation("installed", "complete", false, null);
+        }
+
+        private void WaitForDistroReady()
+        {
+            var result = RunDistroCommandWithRetry("-u root -- sh -lc " + Q("printf SPLATOONDECK_WSL_READY"), true, 30 * 1000);
+            if (result.ExitCode != 0 || result.Output.IndexOf("SPLATOONDECK_WSL_READY", StringComparison.Ordinal) < 0)
+                throw new InvalidOperationException(FriendlyDistroFailure(result));
+        }
+
+        private CommandResult RunDistroCommandWithRetry(string arguments, bool allowFailure, int timeoutMilliseconds)
+        {
+            CommandResult result = null;
+            for (var attempt = 1; attempt <= 60; attempt++)
+            {
+                result = commands.Run("wsl.exe", "-d " + ProgramDistro + " " + arguments, true, timeoutMilliseconds);
+                if (result.ExitCode == 0) return result;
+                if (!IsDistroNotReady(result)) break;
+                if (attempt == 60) break;
+                Detail("WSL has registered SplatoonDeck and is refreshing its first-start state. Retrying automatically (attempt " + (attempt + 1) + "/60; up to 5 minutes).");
+                commands.Run("wsl.exe", "--list --verbose", true, 30 * 1000);
+                Thread.Sleep(5 * 1000);
+            }
+            if (!allowFailure) throw new InvalidOperationException(FriendlyDistroFailure(result));
+            return result;
+        }
+
+        private static bool IsDistroNotReady(CommandResult result)
+        {
+            return result != null && (result.Output ?? "").IndexOf("WSL_E_DISTRO_NOT_FOUND", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string FriendlyDistroFailure(CommandResult result)
+        {
+            if (IsDistroNotReady(result)) return "WSL imported the private Linux environment but did not finish registering it. Restart Windows, then retry; the verified download will be reused.";
+            var output = result == null ? "" : result.Output ?? "";
+            var code = System.Text.RegularExpressions.Regex.Match(output, @"Wsl/[A-Za-z0-9_./-]+");
+            return "The private SplatoonDeck Linux environment could not be started" + (code.Success ? " (" + code.Value + ")" : "") + ". Restart Windows, then retry.";
         }
 
         public void Uninstall()
@@ -730,111 +935,418 @@ namespace SplatoonDeck.Setup
                 log.Line("No SplatoonDeck install record was found. Nothing was removed.");
                 return;
             }
-            var completedInstall = state.Bool("completed") && state.Text("lifecycle") == "installed";
-            state.Values["schema"] = 4;
+            var completedInstall = state.Bool("completed");
+            var restart = state.Bool("restartRequired") && state.Text("restartReason") == "uninstall";
+            state.Values["schema"] = 5;
             state.Values["lifecycle"] = "uninstalling";
-            state.Values["phase"] = "cleanup";
-            state.Values["restartRequired"] = false;
-            state.Values["restartReason"] = null;
-            state.Save();
-
-            Step("1/5", "Returning and unsharing Bluetooth devices owned by SplatoonDeck");
-            CleanupBluetooth();
-
-            Step("2/5", "Removing the dedicated Linux environment");
-            var distros = ListDistros();
-            if (state.Bool("createdDistroByApp") && distros.Contains(ProgramDistro, StringComparer.OrdinalIgnoreCase))
-            {
-                if (completedInstall)
-                {
-                    Detail("Stopping and unregistering " + ProgramDistro + ".");
-                    commands.Run("wsl.exe", "--terminate " + Q(ProgramDistro), true, 20 * 1000);
-                    var unregister = commands.Run("wsl.exe", "--unregister " + Q(ProgramDistro), true, 30 * 1000);
-                    if (unregister.ExitCode != 0 || unregister.TimedOut)
-                    {
-                        Detail("WSL could not unregister the environment. Removing only SplatoonDeck's registration record.");
-                        RemoveDistroRegistration(ProgramDistro);
-                    }
-                }
-                else
-                {
-                    Detail("Setup was not completed. Removing only SplatoonDeck's registration record without starting the outdated WSL runtime.");
-                    RemoveDistroRegistration(ProgramDistro);
-                }
-                if (ListDistros().Contains(ProgramDistro, StringComparer.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("The dedicated SplatoonDeck Linux environment could not be removed.");
-            }
-            else Detail("The dedicated Linux environment is already absent.");
-            state.Values["createdDistroByApp"] = false;
-            if (Directory.Exists(appRoot))
-            {
-                var expected = Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SplatoonDeck"));
-                var actual = Path.GetFullPath(appRoot);
-                if (!String.Equals(expected, actual, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to remove an unexpected application data path.");
-                Directory.Delete(actual, true);
-                Detail("Removed downloaded setup files and the isolated Linux disk.");
-            }
-
-            Step("3/5", "Removing usbipd-win when installed by this app");
-            if (state.Bool("installedUsbipdByApp"))
-            {
-                Detail("Uninstalling the copy of usbipd-win added by SplatoonDeck.");
-                var winget = FindExecutable("winget.exe");
-                if (!String.IsNullOrEmpty(winget)) commands.Run(winget, "uninstall --id dorssel.usbipd-win --exact --silent --disable-interactivity", true, 10 * 60 * 1000);
-                foreach (var productCode in state.Strings("installedUsbipdMsiProductsByApp"))
-                {
-                    if (!IsProductCode(productCode)) continue;
-                    var result = commands.Run("msiexec.exe", "/x " + Q(productCode) + " /qn /norestart", true);
-                    if (result.ExitCode != 0 && result.ExitCode != 1605 && result.ExitCode != 1614 && result.ExitCode != 3010) throw new InvalidOperationException("usbipd-win uninstall failed with exit code " + result.ExitCode);
-                }
-            }
-            else Detail("usbipd-win existed before SplatoonDeck or is already absent; preserving it.");
-            state.Values["installedUsbipdByApp"] = false;
-            state.Values["installedUsbipdMsiProductsByApp"] = new object[0];
-
-            var remaining = ListDistros();
-            Step("4/5", "Removing the WSL runtime added by SplatoonDeck");
-            var ownsWslRuntime = state.Bool("installedWslRuntimeByApp");
-            var runtimeRestart = false;
-            if (remaining.Count == 0 && ownsWslRuntime)
-            {
-                Detail("Removing the WSL runtime added by SplatoonDeck.");
-                if (IsWingetPackageInstalled("Microsoft.WSL"))
-                {
-                    Detail("Removing the WSL application package added by SplatoonDeck.");
-                    commands.Run("winget.exe", "uninstall --id Microsoft.WSL --exact --silent --disable-interactivity", true, 10 * 60 * 1000);
-                }
-                foreach (var productCode in state.Strings("installedWslMsiProductsByApp"))
-                {
-                    if (!IsProductCode(productCode)) continue;
-                    Detail("Removing WSL runtime package " + productCode + ".");
-                    var result = commands.Run("msiexec.exe", "/x " + Q(productCode) + " /qn /norestart", true);
-                    if (result.ExitCode != 0 && result.ExitCode != 1605 && result.ExitCode != 1614 && result.ExitCode != 3010) throw new InvalidOperationException("WSL runtime uninstall failed with exit code " + result.ExitCode);
-                    runtimeRestart |= result.ExitCode == 3010;
-                }
-            }
-            else if (remaining.Count > 0) Detail("Other WSL distributions are installed, so the shared WSL runtime is preserved.");
-            else Detail("The WSL runtime existed before SplatoonDeck or is already absent; preserving it.");
-            state.Values["installedWslRuntimeByApp"] = false;
-            state.Values["wslRuntimePrepared"] = false;
-            state.Values["installedWslMsiProductsByApp"] = new object[0];
-
-            Step("5/5", "Checking shared Windows features");
-            var restart = runtimeRestart;
-            if (remaining.Count == 0 && state.Bool("enabledWslFeatureByApp")) restart |= DisableFeature("Microsoft-Windows-Subsystem-Linux");
-            else if (state.Bool("enabledWslFeatureByApp")) Detail("Other WSL distributions were found, so the shared WSL feature was retained.");
-            if (remaining.Count == 0 && state.Bool("enabledVmFeatureByApp")) restart |= DisableFeature("VirtualMachinePlatform");
-            else if (state.Bool("enabledVmFeatureByApp")) Detail("Other WSL distributions were found, so Virtual Machine Platform was retained.");
-            state.Values["enabledWslFeatureByApp"] = false;
-            state.Values["enabledVmFeatureByApp"] = false;
-            state.Values["completed"] = false;
             state.Values["restartRequired"] = restart;
             state.Values["restartReason"] = restart ? "uninstall" : null;
-            state.Values["lifecycle"] = "uninstalled";
-            state.Values["phase"] = restart ? "cleanup-restart-pending" : "cleanup-complete";
-            state.Values["uninstalledAt"] = DateTime.UtcNow.ToString("o");
+            StartOperation("uninstall", 6);
+            var issues = new List<string>();
+
+            var bluetoothClean = CleanupStage(1, "cleanup-bluetooth", "Returning Bluetooth to Windows", "Remove the private Linux environment", issues, delegate { CleanupBluetooth(); });
+            var distroClean = CleanupStage(2, "cleanup-distro", "Removing the private SplatoonDeck Linux environment", "Remove USB/IP support added by SplatoonDeck", issues, delegate
+            {
+                RemoveOwnedDistro(completedInstall);
+                RemoveAppData();
+            });
+            var usbipdClean = CleanupStage(3, "cleanup-usbipd", "Removing USB/IP support added by SplatoonDeck", "Remove the WSL runtime added by SplatoonDeck", issues, delegate
+            {
+                if (!bluetoothClean) throw new InvalidOperationException("Bluetooth cleanup must succeed before usbipd-win can be removed.");
+                restart |= RemoveOwnedUsbipd();
+            });
+            var runtimeClean = CleanupStage(4, "cleanup-wsl-runtime", "Removing the WSL runtime added by SplatoonDeck", "Restore shared Windows features", issues, delegate
+            {
+                if (!distroClean) throw new InvalidOperationException("The private Linux environment must be removed before the shared WSL runtime can be changed.");
+                restart |= RemoveOwnedWslRuntime();
+            });
+            CleanupStage(5, "cleanup-features", "Restoring shared Windows features", "Verify that cleanup is complete", issues, delegate
+            {
+                if (!runtimeClean) throw new InvalidOperationException("The WSL runtime cleanup must succeed before Windows features can be restored.");
+                restart |= RestoreOwnedFeatures();
+            });
+            CleanupStage(6, "cleanup-verification", "Verifying that cleanup is complete", null, issues, delegate
+            {
+                if (state.Bool("createdDistroByApp") || state.Bool("installedUsbipdByApp") || state.Bool("installedWslRuntimeByApp") || state.Bool("enabledWslFeatureByApp") || state.Bool("enabledVmFeatureByApp"))
+                    throw new InvalidOperationException("Some app-owned dependencies still need cleanup. Retry Uninstall Dependencies.");
+            });
+
+            state.Values["restartRequired"] = restart;
+            state.Values["restartReason"] = restart ? "uninstall" : null;
             state.Save();
+            if (issues.Count > 0)
+            {
+                state.Values["cleanupIssues"] = issues.ToArray();
+                state.Values["completed"] = false;
+                state.Save();
+                throw new InvalidOperationException("Cleanup finished with " + issues.Count + " unresolved stage(s):\n" + String.Join("\n", issues));
+            }
+
+            state.Values["cleanupIssues"] = new object[0];
+            state.Values["uninstalledAt"] = DateTime.UtcNow.ToString("o");
+            FinishOperation("uninstalled", restart ? "cleanup-restart-pending" : "cleanup-complete", restart, "uninstall");
             DeleteFile(options.SessionPath);
+        }
+
+        private void CaptureBaseline()
+        {
+            var wslFeature = IsFeatureEnabled("Microsoft-Windows-Subsystem-Linux");
+            var vmFeature = IsFeatureEnabled("VirtualMachinePlatform");
+            var wslMsi = FindWslMsiProducts();
+            var usbipdMsi = FindUsbipdMsiProducts();
+            var distros = ListDistros();
+            var wslRuntime = CurrentWslRuntimeInstalled();
+            var usbipd = !String.IsNullOrEmpty(FindUsbipd());
+            state.Values["baselineCaptured"] = true;
+            state.Values["baselineCapturedAt"] = DateTime.UtcNow.ToString("o");
+            state.Values["installedAt"] = DateTime.UtcNow.ToString("o");
+            state.Values["wslFeatureEnabledBefore"] = wslFeature;
+            state.Values["vmFeatureEnabledBefore"] = vmFeature;
+            state.Values["wslRuntimeInstalledBefore"] = wslRuntime;
+            state.Values["usbipdInstalledBefore"] = usbipd;
+            state.Values["distrosBefore"] = distros.ToArray();
+            state.Values["dedicatedDistroExistedBefore"] = distros.Contains(ProgramDistro, StringComparer.OrdinalIgnoreCase);
+            state.Values["wslEnvironmentExistedBefore"] = wslFeature || wslRuntime || distros.Count > 0;
+            state.Values["wslMsiProductsBefore"] = wslMsi.ToArray();
+            state.Values["usbipdMsiProductsBefore"] = usbipdMsi.ToArray();
+            state.Values["createdDistroByApp"] = false;
+            state.Values["installedUsbipdByApp"] = false;
+            state.Values["installedWslRuntimeByApp"] = false;
+            state.Values["enabledWslFeatureByApp"] = false;
+            state.Values["enabledVmFeatureByApp"] = false;
+            state.Values["installedWslMsiProductsByApp"] = new object[0];
+            state.Values["installedUsbipdMsiProductsByApp"] = new object[0];
+            state.Values["boundBluetoothByApp"] = new object[0];
+            state.Save();
+            Detail("The original WSL, Linux distribution, USB/IP and Windows feature state has been recorded.");
+        }
+
+        private void MigrateLegacyBaseline()
+        {
+            var wslFeature = IsFeatureEnabled("Microsoft-Windows-Subsystem-Linux");
+            var vmFeature = IsFeatureEnabled("VirtualMachinePlatform");
+            var runtime = CurrentWslRuntimeInstalled();
+            var usbipd = !String.IsNullOrEmpty(FindUsbipd());
+            var distros = ListDistros();
+            state.Values["baselineCaptured"] = true;
+            state.Values["baselineCapturedAt"] = DateTime.UtcNow.ToString("o");
+            state.Values["baselineMigratedFromLegacyState"] = true;
+            state.Values["wslFeatureEnabledBefore"] = wslFeature && !state.Bool("enabledWslFeatureByApp");
+            state.Values["vmFeatureEnabledBefore"] = vmFeature && !state.Bool("enabledVmFeatureByApp");
+            state.Values["wslRuntimeInstalledBefore"] = runtime && !state.Bool("installedWslRuntimeByApp");
+            state.Values["usbipdInstalledBefore"] = usbipd && !state.Bool("installedUsbipdByApp");
+            state.Values["distrosBefore"] = distros.Where(name => !state.Bool("createdDistroByApp") || !String.Equals(name, ProgramDistro, StringComparison.OrdinalIgnoreCase)).ToArray();
+            state.Values["dedicatedDistroExistedBefore"] = distros.Contains(ProgramDistro, StringComparer.OrdinalIgnoreCase) && !state.Bool("createdDistroByApp");
+            if (state.Bool("installedWslRuntimeByApp") && String.IsNullOrEmpty(state.Text("wslInstallMethod"))) state.Values["wslInstallMethod"] = "winget";
+            if (!state.Values.ContainsKey("wslMsiProductsBefore")) state.Values["wslMsiProductsBefore"] = new object[0];
+            if (!state.Values.ContainsKey("usbipdMsiProductsBefore")) state.Values["usbipdMsiProductsBefore"] = new object[0];
+            state.Save();
+            Detail("The previous SplatoonDeck ownership record was upgraded without changing the existing environment.");
+        }
+
+        private void ReconcileInterruptedInstall()
+        {
+            if (state.Bool("wslRuntimeInstallAttempted") && !state.Bool("wslRuntimeInstalledBefore") && CurrentWslRuntimeInstalled()) state.Values["installedWslRuntimeByApp"] = true;
+            if (state.Bool("usbipdInstallAttempted") && !state.Bool("usbipdInstalledBefore") && !String.IsNullOrEmpty(FindUsbipd())) state.Values["installedUsbipdByApp"] = true;
+            if (state.Bool("windowsFeatureEnableAttempted"))
+            {
+                if (!state.Bool("wslFeatureEnabledBefore") && IsFeatureEnabled("Microsoft-Windows-Subsystem-Linux")) state.Values["enabledWslFeatureByApp"] = true;
+                if (!state.Bool("vmFeatureEnabledBefore") && IsFeatureEnabled("VirtualMachinePlatform")) state.Values["enabledVmFeatureByApp"] = true;
+            }
+            var distroPath = FindDistroBasePath(ProgramDistro);
+            if (state.Bool("distroImportAttempted") && !state.Bool("dedicatedDistroExistedBefore") && IsExpectedDistroPath(distroPath)) state.Values["createdDistroByApp"] = true;
+            state.Save();
+        }
+
+        private List<string> AddedProducts(string baselineKey, List<string> current)
+        {
+            var baseline = state.Strings(baselineKey);
+            return current.Where(code => !baseline.Contains(code, StringComparer.OrdinalIgnoreCase)).ToList();
+        }
+
+        private CommandResult RunWindowsInstallerWithRetry(string file, string arguments, string component, int commandTimeout)
+        {
+            CommandResult last = null;
+            for (var attempt = 1; attempt <= 6; attempt++)
+            {
+                WaitForWindowsInstallerIdle("installing " + component, 3 * 60 * 1000);
+                last = commands.Run(file, arguments, true, commandTimeout);
+                if (!IsWindowsInstallerBusy(last)) return last;
+                if (attempt == 6) break;
+                Detail("Windows Installer is finishing another package. Waiting before retrying " + component + " (attempt " + (attempt + 1) + "/6).");
+                Thread.Sleep(10 * 1000);
+            }
+            throw new TimeoutException("Windows Installer remained busy while preparing " + component + ". Restart Windows, then retry; completed stages will be reused.\n" + (last == null ? "" : last.Output));
+        }
+
+        private static bool IsWindowsInstallerBusy(CommandResult result)
+        {
+            if (result == null) return false;
+            var output = result.Output ?? "";
+            return result.ExitCode == 1618 ||
+                output.IndexOf("exit code: 1618", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                output.IndexOf("0x80070652", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                output.IndexOf("another installation is already in progress", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                output.IndexOf("另一个安装程序", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private void WaitForWindowsInstallerIdle(string purpose, int timeoutMilliseconds)
+        {
+            var elapsed = Stopwatch.StartNew();
+            var announced = false;
+            while (true)
+            {
+                Mutex installer = null;
+                var acquired = false;
+                try
+                {
+                    installer = Mutex.OpenExisting(@"Global\_MSIExecute");
+                    try { acquired = installer.WaitOne(0, false); }
+                    catch (AbandonedMutexException) { acquired = true; }
+                    if (acquired)
+                    {
+                        installer.ReleaseMutex();
+                        return;
+                    }
+                }
+                catch (WaitHandleCannotBeOpenedException) { return; }
+                catch (UnauthorizedAccessException) { return; }
+                finally { if (installer != null) installer.Dispose(); }
+
+                if (elapsed.ElapsedMilliseconds >= timeoutMilliseconds)
+                    throw new TimeoutException("Windows Installer did not become available while " + purpose + ". Restart Windows, then retry.");
+                if (!announced)
+                {
+                    Detail("Another Windows installation is still finishing. Waiting before " + purpose + ".");
+                    announced = true;
+                }
+                Thread.Sleep(5 * 1000);
+            }
+        }
+
+        private bool CleanupStage(int index, string phase, string title, string nextTitle, List<string> issues, Action action)
+        {
+            Stage(index, phase, title, nextTitle);
+            try
+            {
+                action();
+                state.Values["lastCompletedCleanupStage"] = index;
+                state.Save();
+                return true;
+            }
+            catch (Exception error)
+            {
+                var issue = title + ": " + error.Message;
+                issues.Add(issue);
+                state.Values["stageStatus"] = "warning";
+                state.Values["stageDetail"] = issue;
+                state.Values["cleanupIssues"] = issues.ToArray();
+                state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+                state.Save();
+                log.Line("  [FAILED] " + issue, ConsoleColor.Yellow);
+                return false;
+            }
+        }
+
+        private bool CurrentWslRuntimeInstalled()
+        {
+            return FindWslMsiProducts().Count > 0 ||
+                RegistryContainsPackage(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications", "WindowsSubsystemForLinux") ||
+                RegistryContainsPackage(Registry.CurrentUser, @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages", "WindowsSubsystemForLinux") ||
+                IsWingetPackageInstalled("Microsoft.WSL");
+        }
+
+        private static bool RegistryContainsPackage(RegistryKey root, string path, string token)
+        {
+            try
+            {
+                using (var key = root.OpenSubKey(path))
+                {
+                    return key != null && key.GetSubKeyNames().Any(name => name.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+            }
+            catch { return false; }
+        }
+
+        private string FindDistroBasePath(string distributionName)
+        {
+            using (var root = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss"))
+            {
+                if (root == null) return "";
+                foreach (var keyName in root.GetSubKeyNames())
+                {
+                    using (var distro = root.OpenSubKey(keyName))
+                    {
+                        var name = distro == null ? "" : Convert.ToString(distro.GetValue("DistributionName"));
+                        if (String.Equals(name, distributionName, StringComparison.OrdinalIgnoreCase))
+                            return Environment.ExpandEnvironmentVariables(Convert.ToString(distro.GetValue("BasePath")) ?? "");
+                    }
+                }
+            }
+            return "";
+        }
+
+        private bool IsExpectedDistroPath(string path)
+        {
+            if (String.IsNullOrWhiteSpace(path)) return false;
+            var expected = Path.GetFullPath(wslRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var actual = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return String.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void RemoveOwnedDistro(bool completedInstall)
+        {
+            if (!state.Bool("createdDistroByApp"))
+            {
+                Detail("The private Linux environment was not created by SplatoonDeck and will be preserved.");
+                return;
+            }
+            var distroPath = FindDistroBasePath(ProgramDistro);
+            if (!String.IsNullOrEmpty(distroPath) && !IsExpectedDistroPath(distroPath))
+                throw new InvalidOperationException("Refusing to remove a distribution stored outside the SplatoonDeck data directory: " + distroPath);
+            if (!String.IsNullOrEmpty(distroPath) && completedInstall)
+            {
+                Detail("Stopping and unregistering " + ProgramDistro + ".");
+                commands.Run("wsl.exe", "--terminate " + ProgramDistro, true, 20 * 1000);
+                var unregister = commands.Run("wsl.exe", "--unregister " + ProgramDistro, true, 2 * 60 * 1000);
+                if (unregister.ExitCode != 0 || unregister.TimedOut)
+                    Detail("WSL could not unregister the environment normally; its app-owned registration will be removed directly.");
+            }
+            if (!String.IsNullOrEmpty(FindDistroBasePath(ProgramDistro))) RemoveDistroRegistration(ProgramDistro);
+            if (!String.IsNullOrEmpty(FindDistroBasePath(ProgramDistro)))
+                throw new InvalidOperationException("The private SplatoonDeck Linux environment could not be unregistered.");
+            state.Values["createdDistroByApp"] = false;
+            state.Save();
+        }
+
+        private void RemoveAppData()
+        {
+            if (!Directory.Exists(appRoot)) return;
+            var expected = Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SplatoonDeck"));
+            var actual = Path.GetFullPath(appRoot);
+            if (!String.Equals(expected, actual, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to remove an unexpected application data path.");
+            Directory.Delete(actual, true);
+            Detail("Removed downloaded setup files and the isolated Linux disk.");
+        }
+
+        private bool RemoveOwnedUsbipd()
+        {
+            if (!state.Bool("installedUsbipdByApp"))
+            {
+                Detail("usbipd-win existed before SplatoonDeck or is already absent; it will be preserved.");
+                return false;
+            }
+            Detail("Removing only the usbipd-win copy installed by SplatoonDeck.");
+            var restart = false;
+            var failures = new List<string>();
+            var winget = FindExecutable("winget.exe");
+            if (!String.IsNullOrEmpty(winget))
+            {
+                var result = commands.Run(winget, "uninstall --id dorssel.usbipd-win --exact --silent --disable-interactivity", true, 10 * 60 * 1000);
+                if (!AcceptedUninstallExit(result.ExitCode)) failures.Add("winget exit code " + result.ExitCode);
+                restart |= result.ExitCode == 3010;
+            }
+            foreach (var productCode in state.Strings("installedUsbipdMsiProductsByApp"))
+            {
+                if (!IsProductCode(productCode)) continue;
+                var result = commands.Run("msiexec.exe", "/x " + Q(productCode) + " /qn /norestart", true, 10 * 60 * 1000);
+                if (!AcceptedUninstallExit(result.ExitCode)) failures.Add("MSI " + productCode + " exit code " + result.ExitCode);
+                restart |= result.ExitCode == 3010;
+            }
+            if (!String.IsNullOrEmpty(FindUsbipd()) && !restart)
+                throw new InvalidOperationException("usbipd-win is still installed. " + String.Join("; ", failures));
+            state.Values["installedUsbipdByApp"] = false;
+            state.Values["installedUsbipdMsiProductsByApp"] = new object[0];
+            state.Save();
+            return restart;
+        }
+
+        private bool RemoveOwnedWslRuntime()
+        {
+            var remaining = ListDistros();
+            if (remaining.Count > 0)
+            {
+                Detail("Other Linux distributions are installed, so the shared WSL runtime is preserved.");
+                state.Values["installedWslRuntimeByApp"] = false;
+                state.Values["installedWslMsiProductsByApp"] = new object[0];
+                state.Save();
+                return false;
+            }
+            if (!state.Bool("installedWslRuntimeByApp"))
+            {
+                Detail("The WSL runtime existed before SplatoonDeck or is already absent; it will be preserved.");
+                return false;
+            }
+            Detail("Removing only the WSL runtime installed by SplatoonDeck.");
+            var restart = false;
+            var failures = new List<string>();
+            var winget = FindExecutable("winget.exe");
+            if (!String.IsNullOrEmpty(winget) && state.Text("wslInstallMethod") == "winget")
+            {
+                var result = commands.Run(winget, "uninstall --id Microsoft.WSL --exact --silent --disable-interactivity", true, 10 * 60 * 1000);
+                if (!AcceptedUninstallExit(result.ExitCode)) failures.Add("winget exit code " + result.ExitCode);
+                restart |= result.ExitCode == 3010;
+            }
+            foreach (var productCode in state.Strings("installedWslMsiProductsByApp"))
+            {
+                if (!IsProductCode(productCode)) continue;
+                var result = commands.Run("msiexec.exe", "/x " + Q(productCode) + " /qn /norestart", true, 10 * 60 * 1000);
+                if (!AcceptedUninstallExit(result.ExitCode)) failures.Add("MSI " + productCode + " exit code " + result.ExitCode);
+                restart |= result.ExitCode == 3010;
+            }
+            if (CurrentWslRuntimeInstalled() && !restart)
+                throw new InvalidOperationException("The WSL runtime is still installed. " + String.Join("; ", failures));
+            state.Values["installedWslRuntimeByApp"] = false;
+            state.Values["installedWslMsiProductsByApp"] = new object[0];
+            state.Values["wslRuntimePrepared"] = false;
+            state.Save();
+            return restart;
+        }
+
+        private bool RestoreOwnedFeatures()
+        {
+            var remaining = ListDistros();
+            if (remaining.Count > 0)
+            {
+                Detail("Other Linux distributions are installed, so shared WSL features are preserved.");
+                state.Values["enabledWslFeatureByApp"] = false;
+                state.Values["enabledVmFeatureByApp"] = false;
+                state.Save();
+                return false;
+            }
+            var restart = false;
+            if (state.Bool("enabledWslFeatureByApp"))
+            {
+                restart |= DisableFeature("Microsoft-Windows-Subsystem-Linux");
+                state.Values["enabledWslFeatureByApp"] = false;
+                state.Save();
+            }
+            else Detail("The WSL optional feature existed before SplatoonDeck or is already disabled; it will be preserved.");
+            if (state.Bool("enabledVmFeatureByApp"))
+            {
+                restart |= DisableFeature("VirtualMachinePlatform");
+                state.Values["enabledVmFeatureByApp"] = false;
+                state.Save();
+            }
+            else Detail("Virtual Machine Platform existed before SplatoonDeck or is already disabled; it will be preserved.");
+            return restart;
+        }
+
+        private void VerifyInstalledEnvironment()
+        {
+            if (!IsFeatureEnabled("Microsoft-Windows-Subsystem-Linux") || !IsFeatureEnabled("VirtualMachinePlatform"))
+                throw new InvalidOperationException("The required Windows features are not enabled.");
+            if (!CurrentWslRuntimeInstalled()) throw new InvalidOperationException("The Microsoft WSL runtime could not be verified.");
+            if (!IsExpectedDistroPath(FindDistroBasePath(ProgramDistro))) throw new InvalidOperationException("The private Linux environment could not be verified.");
+            if (String.IsNullOrEmpty(FindUsbipd())) throw new InvalidOperationException("usbipd-win could not be verified.");
+            var command = "command -v bluetoothctl >/dev/null && test -x /opt/splatoondeck/venv/bin/python && /opt/splatoondeck/venv/bin/python -c 'import nxbt'";
+            var linux = commands.Run("wsl.exe", "-d " + ProgramDistro + " -u root -- sh -lc " + Q(command), true, 60 * 1000);
+            if (linux.ExitCode != 0 || linux.TimedOut) throw new InvalidOperationException("BlueZ or NXBT verification failed.\n" + linux.Output);
+        }
+
+        private static bool AcceptedUninstallExit(int code)
+        {
+            return code == 0 || code == 1605 || code == 1614 || code == 3010;
         }
 
         public void RunUsbipd(string executable, string[] arguments)
@@ -857,7 +1369,20 @@ namespace SplatoonDeck.Setup
         private static class DistroName { public const string Value = "SplatoonDeck"; }
 
         private void Step(string number, string message) { log.Line("[" + number + "] " + message, ConsoleColor.Cyan); }
-        private void Detail(string message) { log.Line("  -> " + message, ConsoleColor.DarkGray); }
+        private void Detail(string message)
+        {
+            state.Values["stageDetail"] = message;
+            var download = System.Text.RegularExpressions.Regex.Match(message ?? "", @"Ubuntu download:\s*(\d+)%", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (download.Success)
+            {
+                int percent;
+                if (Int32.TryParse(download.Groups[1].Value, out percent))
+                    state.Values["progressPercent"] = Math.Max(0, Math.Min(99, ((stageIndex - 1) * 100 + percent) / Math.Max(1, stageTotal)));
+            }
+            state.Values["updatedAt"] = DateTime.UtcNow.ToString("o");
+            state.Save();
+            log.Line("  -> " + message, ConsoleColor.DarkGray);
+        }
         private static string Q(string value) { return CommandRunner.QuoteArgument(value); }
 
         private bool IsFeatureEnabled(string name)
@@ -873,9 +1398,24 @@ namespace SplatoonDeck.Setup
         private bool DisableFeature(string name)
         {
             Detail("Disabling " + name + " because SplatoonDeck enabled it and no other WSL distributions remain.");
-            var result = commands.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "dism.exe"), "/Online /Disable-Feature /FeatureName:" + name + " /NoRestart", true);
-            if (result.ExitCode != 0 && result.ExitCode != 3010) throw new InvalidOperationException("DISM failed with exit code " + result.ExitCode);
+            var result = commands.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "dism.exe"), "/Online /Disable-Feature /FeatureName:" + name + " /NoRestart", true, 10 * 60 * 1000);
+            if (result.TimedOut) throw new TimeoutException("Windows did not finish disabling " + name + ". Restart Windows, then retry cleanup.");
+            if (result.ExitCode != 0 && result.ExitCode != 3010)
+                throw new InvalidOperationException("Windows could not disable " + name + " (DISM exit code " + result.ExitCode + ").\n" + result.Output);
+            if (IsFeatureEnabled(name))
+                throw new InvalidOperationException(name + " is still enabled after Windows reported that cleanup completed. Restart Windows, then retry cleanup.");
             return result.ExitCode == 3010;
+        }
+
+        private bool EnableFeatureWithDism(string name)
+        {
+            Detail("Enabling " + name + " with Windows component servicing.");
+            var dism = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "dism.exe");
+            var result = RunWindowsInstallerWithRetry(dism, "/Online /Enable-Feature /FeatureName:" + name + " /All /NoRestart", name, 10 * 60 * 1000);
+            if (result.TimedOut) throw new TimeoutException("Windows did not finish enabling " + name + ". Restart Windows, then retry.");
+            if (result.ExitCode != 0 && result.ExitCode != 3010)
+                throw new InvalidOperationException("Windows could not enable " + name + " (DISM exit code " + result.ExitCode + ").\n" + result.Output);
+            return true;
         }
 
         private List<string> ListDistros()
@@ -930,7 +1470,7 @@ namespace SplatoonDeck.Setup
         private bool IsWingetPackageInstalled(string id)
         {
             if (String.IsNullOrEmpty(FindExecutable("winget.exe"))) return false;
-            var result = commands.Run("winget.exe", "list --id " + id + " --exact --accept-source-agreements --disable-interactivity", true);
+            var result = commands.Run("winget.exe", "list --id " + id + " --exact --accept-source-agreements --disable-interactivity", true, 90 * 1000);
             return result.ExitCode == 0 && result.Output.IndexOf(id, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 

@@ -37,7 +37,7 @@ SplatoonDeck 是一款面向 Splatoon 3 玩家的 Windows 工具。它可以把�
 
 SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请前往 [GitHub Releases](https://github.com/Polaris-SJTU/SplatoonDeck/releases/latest) 获取。
 
-`v0.3.0` 增加了手柄操作宏的录制与循环回放，并重构了环境管理。安装按阶段执行并可在重启后继续；窗口会实时显示步骤、进度和命令输出，关闭窗口会同步取消子进程。Ubuntu 环境下载支持断点续传、自动重试与 SHA-256 校验。卸载只移除 SplatoonDeck 添加的组件，同时保留用户原有或其他软件正在使用的 WSL 环境。完整内容请查看 [v0.3.0 发布说明](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0)。
+`v0.3.0` 增加了手柄操作宏的录制与循环回放，并重构了环境管理。安装按阶段执行并可在重启后继续；窗口会实时显示步骤、进度和命令输出，关闭窗口会同步取消子进程。专用 Linux 环境的创建与首次启动已适配当前 WSL，Ubuntu 下载支持断点续传、自动重试与 SHA-256 校验。卸载只移除 SplatoonDeck 添加的组件，同时保留用户原有或其他软件正在使用的 WSL 环境。完整内容请查看 [v0.3.0 发布说明](https://github.com/Polaris-SJTU/SplatoonDeck/releases/tag/v0.3.0)。
 
 ### 第一次连接 Switch 2
 
@@ -131,6 +131,7 @@ SplatoonDeck 是单文件便携应用，不需要传统安装。后续版本请�
 - 安装与卸载窗口实时显示步骤和命令输出，失败时等待用户确认并保留日志位置。
 - 安装与卸载只能同时运行一个；关闭进度窗口时，其启动的 DISM、winget 等子进程会一并停止。
 - Ubuntu 环境下载支持断点续传、四次自动重试和官方 SHA-256 校验，未完成文件不会被误当作可用环境。
+- 专用 Linux 环境的首次启动兼容当前 WSL 2.7 系列，并已在原本没有 WSL 的 Windows 环境完成首次安装验证。
 - 准确区分安装重启和卸载重启，不会在清理后错误提示“继续安装”。
 - 如果电脑原先没有 WSL，会在卸载时清理由 SplatoonDeck 新增的 WSL 运行时和系统功能；已有环境及其他发行版会保留。
 - 跨重启保存安装进度和组件归属，重新打开应用后可以继续准备或安全清理。
