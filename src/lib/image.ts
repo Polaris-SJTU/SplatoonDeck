@@ -54,9 +54,7 @@ export function nxbtMs(ms: number): number {
   return (ticks / NXBT_HZ) * 1000;
 }
 const STICK_LEFT = 'L_STICK@-100+000';
-const STICK_RIGHT = 'L_STICK@+100+000';
 const STICK_UP = 'L_STICK@+000+100';
-const STICK_DOWN = 'L_STICK@+000-100';
 const STICK_CENTER = 'L_STICK@+000+000';
 // Horizontal homing has to cross up to 319 pixels, while vertical homing only
 // crosses 119. Keep independent safety margins so a slow frame or Bluetooth
@@ -191,41 +189,14 @@ export function processImage(image: HTMLImageElement, settings: ImageSettings) {
 }
 
 const BOUNDARY_RESET_COST = 28;
-type BandSegment = { edge: 'start' | 'end'; positions: number[] };
+type BandSegment = { positions: number[] };
 type BandPlan = { segments: BandSegment[]; movementCost: number };
 
-/**
- * Plan one row/column from calibrated canvas edges.  Besides choosing the
- * nearest edge, the planner may split widely separated content into a start
- * cluster and an end cluster.  This avoids crossing a large empty gap with
- * hundreds of fallible D-pad taps and is faster whenever the saved movement
- * outweighs one additional stick-to-wall calibration.
- */
-function planBand(positions: number[], limit: number, allowEndAnchor = true): BandPlan {
+/** Plan one row/column from its fixed leading edge. */
+function planBand(positions: number[]): BandPlan {
   if (positions.length === 0) return { segments: [], movementCost: 0 };
   const startCost = BOUNDARY_RESET_COST + positions[positions.length - 1];
-  if (!allowEndAnchor) {
-    return { segments: [{ edge: 'start', positions: [...positions] }], movementCost: startCost };
-  }
-  const endCost = BOUNDARY_RESET_COST + (limit - 1 - positions[0]);
-  let best: BandPlan = startCost <= endCost
-    ? { segments: [{ edge: 'start', positions: [...positions] }], movementCost: startCost }
-    : { segments: [{ edge: 'end', positions: [...positions].reverse() }], movementCost: endCost };
-
-  for (let split = 0; split < positions.length - 1; split++) {
-    const splitCost = BOUNDARY_RESET_COST * 2
-      + positions[split]
-      + (limit - 1 - positions[split + 1]);
-    if (splitCost >= best.movementCost) continue;
-    best = {
-      segments: [
-        { edge: 'start', positions: positions.slice(0, split + 1) },
-        { edge: 'end', positions: positions.slice(split + 1).reverse() }
-      ],
-      movementCost: splitCost
-    };
-  }
-  return best;
+  return { segments: [{ positions: [...positions] }], movementCost: startCost };
 }
 
 function getBandPositions(pixels: Uint8Array, width: number, height: number, direction: 'row' | 'column', band: number) {
@@ -241,7 +212,7 @@ function getBandPositions(pixels: Uint8Array, width: number, height: number, dir
 export function estimateScanCost(pixels: Uint8Array, width: number, height: number, direction: 'row' | 'column') {
   // Boundary calibration is deliberately retained for strict positioning.
   // Express its fixed time as an equivalent number of discrete moves so auto
-  // mode compares adaptive anchoring + travel + paint taps.
+  // mode compares fixed-edge calibration + travel + paint taps.
   let cost = 0;
   let lastContentBand = -1;
   const bandCount = direction === 'row' ? height : width;
@@ -249,7 +220,7 @@ export function estimateScanCost(pixels: Uint8Array, width: number, height: numb
   for (let band = 0; band < bandCount; band++) {
     const positions = getBandPositions(pixels, width, height, direction, band);
     if (positions.length === 0) continue;
-    cost += planBand(positions, limit, direction === 'row').movementCost + positions.length * 1.5;
+    cost += planBand(positions).movementCost + positions.length * 1.5;
     lastContentBand = band;
   }
   return cost + Math.max(0, lastContentBand);
@@ -268,10 +239,9 @@ export function getDrawPath(pixels: Uint8Array, width: number, height: number, o
   const startBand = Math.max(0, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.startRow ?? 0)));
   const endBand = Math.max(startBand, Math.min((scanDirection === 'row' ? height : width) - 1, Math.round(options.endRow ?? (scanDirection === 'row' ? height : width) - 1)));
   const path: DrawPathPoint[] = [];
-  const limit = scanDirection === 'row' ? width : height;
   for (let band = startBand; band <= endBand; band++) {
     const positions = getBandPositions(pixels, width, height, scanDirection, band);
-    for (const segment of planBand(positions, limit, scanDirection === 'row').segments) {
+    for (const segment of planBand(positions).segments) {
       for (const position of segment.positions) {
         path.push(scanDirection === 'row' ? { x: position, y: band } : { x: band, y: position });
       }
@@ -395,14 +365,14 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
   if (scanDirection === 'row') {
     for (let y = startBand; y <= endBand; y++) {
       const positions = getBandPositions(pixels, width, height, 'row', y);
-      const plan = planBand(positions, width, true);
+      const plan = planBand(positions);
       if (plan.segments.length === 0) {
         if (y < endBand) moveTap('DPAD_DOWN');
         continue;
       }
       for (const segment of plan.segments) {
-        stickHold(segment.edge === 'start' ? STICK_LEFT : STICK_RIGHT, ROW_HOME_HOLD_MS);
-        let currentX = segment.edge === 'start' ? 0 : width - 1;
+        stickHold(STICK_LEFT, ROW_HOME_HOLD_MS);
+        let currentX = 0;
         for (const targetX of segment.positions) {
           currentX = moveX(currentX, targetX);
           const index = y * width + currentX;
@@ -419,14 +389,14 @@ export function generateMacro(pixels: Uint8Array, width: number, height: number,
       // Isolate the only variable under test: column scans always anchor from
       // the top, while all pulse timings remain identical to the confirmed
       // 45 ms baseline.
-      const plan = planBand(positions, height, false);
+      const plan = planBand(positions);
       if (plan.segments.length === 0) {
         if (x < endBand) moveTap('DPAD_RIGHT');
         continue;
       }
       for (const segment of plan.segments) {
-        stickHold(segment.edge === 'start' ? STICK_UP : STICK_DOWN, COLUMN_HOME_HOLD_MS);
-        let currentY = segment.edge === 'start' ? 0 : height - 1;
+        stickHold(STICK_UP, COLUMN_HOME_HOLD_MS);
+        let currentY = 0;
         for (const targetY of segment.positions) {
           currentY = moveY(currentY, targetY);
           const index = currentY * width + x;

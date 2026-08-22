@@ -155,7 +155,7 @@ describe('image pipeline', () => {
     expect([...simulateDrawing(result.macro, width, height, 0)]).toEqual([...pixels]);
   });
 
-  it('round-trips deterministic random canvases through adaptive row and column plans', () => {
+  it('round-trips deterministic random canvases through fixed-edge row and column plans', () => {
     const width = 19;
     const height = 11;
     for (let seed = 1; seed <= 12; seed++) {
@@ -271,26 +271,24 @@ describe('image pipeline', () => {
     expect([...simulateDrawing(neutralMacro, 3, 1, 0)]).toEqual([0, 0, 1]);
   });
 
-  it('splits distant edge content into two calibrated anchors', () => {
+  it('keeps distant row content on one fixed leading-edge path', () => {
     const pixels = new Uint8Array(320);
     pixels[0] = 1;
     pixels[319] = 1;
-    const optimized = generateMacro(pixels, 320, 1, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' });
-    expect(optimized.macro).toContain('L_STICK@-100+000');
-    expect(optimized.macro).toContain('L_STICK@+100+000');
-    expect(optimized.macro).not.toContain('DPAD_LEFT');
-    expect(optimized.macro).not.toContain('DPAD_RIGHT');
-    // Two wall calibrations are far faster than crossing all 319 columns.
-    expect(optimized.durationMs).toBeLessThan(16_000);
-    expect([...simulateDrawing(optimized.macro, 320, 1, 0)]).toEqual([...pixels]);
+    const result = generateMacro(pixels, 320, 1, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' });
+    expect(result.macro).toContain('L_STICK@-100+000');
+    expect(result.macro).not.toContain('L_STICK@+100+000');
+    expect(result.macro).not.toContain('DPAD_LEFT');
+    expect(result.macro).toContain('DPAD_RIGHT');
+    expect([...simulateDrawing(result.macro, 320, 1, 0)]).toEqual([...pixels]);
   });
 
-  it('reports the same adaptive paint order used by the calibrated macro', () => {
+  it('reports the same fixed leading-edge paint order used by the macro', () => {
     const width = 5;
     const pixels = new Uint8Array(width * 2);
     pixels[1] = 1; pixels[4] = 1; pixels[width] = 1; pixels[width + 3] = 1;
     expect(getDrawPath(pixels, width, 2, { pressDurationMs: 45, autoSave: false, scanDirection: 'row' })).toEqual([
-      { x: 4, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 3, y: 1 }
+      { x: 1, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 1 }, { x: 3, y: 1 }
     ]);
   });
 
